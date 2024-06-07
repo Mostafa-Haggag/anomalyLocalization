@@ -9,7 +9,23 @@ from torchvision import transforms as T
 import torch.nn as nn
 import torch.optim as optim
 from torch.nn import functional as F
+import glob
 
+
+class CenterCrop:
+    def __init__(self, crop_size):
+        self.crop_size = crop_size
+
+    def __call__(self, image):
+        width, height = image.size
+        new_width, new_height = self.crop_size
+
+        left = (width - new_width) / 2
+        top = (height - new_height) / 2
+        right = (width + new_width) / 2
+        bottom = (height + new_height) / 2
+
+        return image.crop((left, top, right, bottom))
 
 
 class MVTecAD(data.Dataset):
@@ -19,25 +35,41 @@ class MVTecAD(data.Dataset):
         """Initialize and preprocess the MVTecAD dataset."""
         self.image_dir = image_dir
         self.transform = transform
+        self.image_paths = [os.path.join(image_dir, img) for img in os.listdir(image_dir) if img.endswith(('.jpg', '.bmp', '.png'))]
 
     def __getitem__(self, index):
         """Return one image"""
-        filename = "{:03}.png".format(index)
-        image = Image.open(os.path.join(self.image_dir, filename))
-        return self.transform(image)
+        image_path = self.image_paths[index]
+        #image = Image.open(image_path).convert('L')  # Convert to grayscale
+        image = Image.open(image_path).convert('RGB')
+
+        #image = Image.open(image_path)  # not gray scale as picture is colored
+
+        if self.transform is not None:
+            image = self.transform(image)
+        return image
 
     def __len__(self):
         """Return the number of images."""
-        return len(os.listdir(self.image_dir))
+        return len(self.image_paths)
 
 
 def return_MVTecAD_loader(image_dir, batch_size=256, train=True):
     """Build and return a data loader."""
     transform = []
-    transform.append(T.Resize((512, 512)))
-    transform.append(T.RandomCrop((128,128)))
+    mean = [0.5, 0.5, 0.5]  # (assuming grayscale or RGB)
+    std = [0.5, 0.5, 0.5]  # (assuming grayscale or RGB)
+    # Desired output size of the crop
+    crop_size = (400, 1936)  # Desired crop size
+    #CenterCrop(crop_size)
+    transform.append(CenterCrop(crop_size))
+    transform.append(T.Resize((256, 256)))
+
+    #transform.append(T.RandomCrop((128,128)))
     transform.append(T.RandomHorizontalFlip(p=0.5))
-    transform.append(T.RandomVerticalFlip(p=0.5))    
+    transform.append(T.RandomVerticalFlip(p=0.5))
+    ##transform.append(T.Normalize(mean, std))
+
     transform.append(T.ToTensor())
     transform = T.Compose(transform)
 
@@ -45,5 +77,8 @@ def return_MVTecAD_loader(image_dir, batch_size=256, train=True):
 
     data_loader = data.DataLoader(dataset=dataset,
                                   batch_size=batch_size,
-                                  shuffle=train)
+                                  shuffle=train,
+                                  drop_last=True,
+                                  num_workers=8,
+                                  pin_memory=True)
     return data_loader

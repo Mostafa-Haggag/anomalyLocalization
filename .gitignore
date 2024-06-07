@@ -100,7 +100,7 @@ celerybeat.pid
 
 # SageMath parsed files
 *.sage.py
-
+wandb
 # Environments
 .env
 .venv
@@ -132,3 +132,4 @@ dmypy.json
 logs/
 checkpoints/
 results/
+wandb/
