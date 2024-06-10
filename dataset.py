@@ -63,7 +63,7 @@ def return_MVTecAD_loader(image_dir, batch_size=256, train=True):
     crop_size = (400, 1936)  # Desired crop size
     #CenterCrop(crop_size)
     #transform.append(CenterCrop(crop_size))
-    transform.append(T.Resize((256, 256)))
+    transform.append(T.Resize((128, 128)))
 
     #transform.append(T.RandomCrop((128,128)))
     transform.append(T.RandomHorizontalFlip(p=0.5))

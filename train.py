@@ -201,7 +201,7 @@ def main(config_Dict):
     model = VAE(z_dim=config_Dict["z_dim"]).to(device)
     #model = AE(latent_size=config_dict["z_dim"],img_size=256,vae=False).to(device)
 
-    ##wandb.watch(model, log='gradients',log_freq=100)
+    wandb.watch(model, log='gradients',log_freq=10)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config_Dict["lr"])
     num_epochs = config_Dict["epoch"]
@@ -227,12 +227,12 @@ if __name__ == "__main__":
         torch.backends.cudnn.benchmark = True
 
     print(f"Starting a new wandb run with id {run_id}")
-    config_dict = {"batch_size": 128,
-                   "epoch": 40,
-                   "lr": 1e-5,
+    config_dict = {"batch_size": 256,
+                   "epoch": 500,
+                   "lr": 5e-4,
                    "z_dim": 512,
                    "model_id":'vae_reconstruction',
-                   "tag":"normal_runs"
+                   "tag":"long_run"
                    }
 
     wandb.init(
