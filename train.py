@@ -2,7 +2,7 @@ import os
 import torch
 from torch.nn import functional as F
 from dataset import return_MVTecAD_loader
-from network import VAE,loss_function
+from network import VAE,loss_function , AE , loss_function_2
 import matplotlib.pyplot as plt
 import logging
 import wandb
@@ -57,7 +57,7 @@ def train(model, train_loader, device, optimizer, epoch):
             data = data.to(device)
             optimizer.zero_grad()
             recon_batch = model(data)
-
+            #loss = loss_function_2(recon_batch, data)
             loss = loss_function(recon_batch, data, model.mu, model.logvar)
             loss.backward()
             train_loss += loss.item()
@@ -199,6 +199,8 @@ def main(config_Dict):
     #     os.mkdir(out_dir)
 
     model = VAE(z_dim=config_Dict["z_dim"]).to(device)
+    #model = AE(latent_size=config_dict["z_dim"],img_size=256,vae=False).to(device)
+
     ##wandb.watch(model, log='gradients',log_freq=100)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config_Dict["lr"])

@@ -1,6 +1,125 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
+class AE(nn.Module):
+    def __init__(self, latent_size, multiplier=4, img_size=64, vae=False):
+        super(AE, self).__init__()
+        self.fm = 4 # what is this 4 in here ?
+        # what is it indicating ?
+        self.mp = multiplier
+        # not working in grey scale in here
+        # you are passing am ultiplied of 1
+        # this 2d conv is halfing  every time
+        self.encoder = nn.Sequential(
+            nn.Conv2d(3, int(16 * multiplier), 4, 2, 1, bias=False),
+            nn.BatchNorm2d(int(16 * multiplier)),
+            nn.ReLU(True),
+            nn.Conv2d(int(16 * multiplier),
+                      int(32 * multiplier), 4, 2, 1, bias=False),
+            nn.BatchNorm2d(int(32 * multiplier)),
+            nn.ReLU(True),
+            nn.Conv2d(int(32 * multiplier),
+                      int(64 * multiplier), 4, 2, 1, bias=False),
+            nn.BatchNorm2d(int(64 * multiplier)),
+            nn.ReLU(True),
+            nn.Conv2d(int(64 * multiplier),
+                      int(64 * multiplier), 4, 2, 1, bias=False),
+            nn.BatchNorm2d(int(64 * multiplier)),
+            nn.ReLU(True),
+            # 128 x 128
+            nn.Conv2d(int(64 * multiplier),
+                      int(64 * multiplier), 4, 2, 1, bias=False) if img_size>=128 else nn.Identity(),
+            nn.BatchNorm2d(int(64 * multiplier)) if img_size>=128 else nn.Identity(),
+            nn.ReLU(True) if img_size>=128 else nn.Identity(),
+            # 256 x 256
+            nn.Conv2d(int(64 * multiplier),
+                      int(64 * multiplier), 4, 2, 1, bias=False) if img_size>=256 else nn.Identity(),
+            nn.BatchNorm2d(int(64 * multiplier)) if img_size>=256 else nn.Identity(),
+            nn.ReLU(True) if img_size>=256 else nn.Identity(),
+        )
+        if not vae:
+            # fm is 4 by 4 indicating that i should have by the end (64,4,4) so that it work
+            self.linear_enc = nn.Sequential(
+                nn.Linear(int(64 * multiplier) * self.fm*self.fm, 2048),
+                nn.BatchNorm1d(2048),
+                nn.ReLU(True),
+                nn.Linear(2048, latent_size),
+            )# difference in here that i am mtulpliing the latent size by 2
+        else:
+            self.linear_enc = nn.Sequential(
+                nn.Linear(int(64 * multiplier) * self.fm*self.fm, 2048),
+                nn.BatchNorm1d(2048),
+                nn.ReLU(True),
+                nn.Linear(2048, latent_size * 2),
+            )
+
+        self.linear_dec = nn.Sequential(
+            nn.Linear(latent_size, 2048),
+            nn.BatchNorm1d(2048),
+            nn.ReLU(True),
+            nn.Linear(2048, int(64 * multiplier) * self.fm*self.fm),
+        )
+        self.decoder = nn.Sequential(
+            # 128 x 128
+            nn.ConvTranspose2d(int(64*multiplier), int(64 *
+                                                       multiplier), 4, 2, 1, bias=False) if img_size>=128 else nn.Identity(),
+            nn.BatchNorm2d(int(64*multiplier)) if img_size>=128 else nn.Identity(),
+            nn.ReLU(True) if img_size>=128 else nn.Identity(),
+            # 256 x 256
+            nn.ConvTranspose2d(int(64*multiplier), int(64 *
+                                                       multiplier), 4, 2, 1, bias=False) if img_size>=256 else nn.Identity(),
+            nn.BatchNorm2d(int(64*multiplier)) if img_size>=256 else nn.Identity(),
+            nn.ReLU(True) if img_size>=256 else nn.Identity(),
+
+            nn.ConvTranspose2d(int(64*multiplier), int(64 *
+                                                       multiplier), 4, 2, 1, bias=False),
+            nn.BatchNorm2d(int(64*multiplier)),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(int(64*multiplier), int(32 *
+                                                       multiplier), 4, 2, 1, bias=False),
+            nn.BatchNorm2d(int(32*multiplier)),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(int(32*multiplier), int(16 *
+                                                       multiplier), 4, 2, 1, bias=False),
+            nn.BatchNorm2d(int(16*multiplier)),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(int(16*multiplier),
+                               3, 4, 2, 1, bias=False),
+        )
+        self.initialize()
+
+    def initialize(self):
+        # this is very important
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.LayerNorm):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        lat_rep = self.feature(x)
+        out = self.decode(lat_rep)
+        return out
+
+    def feature(self, x):
+        lat_rep = self.encoder(x)
+        lat_rep = lat_rep.view(lat_rep.size(0), -1)
+        lat_rep = self.linear_enc(lat_rep)
+        return lat_rep
+
+    def decode(self, x):
+        out = self.linear_dec(x)
+        out = out.view(out.size(0), int(64 * self.mp), self.fm, self.fm)
+        out = self.decoder(out)
+        out = torch.tanh(out)
+        return out
+
 class VAE(nn.Module):
 
     def __init__(self, z_dim=128):
@@ -8,7 +127,8 @@ class VAE(nn.Module):
 
         # encode
         self.conv_e = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=4, stride=2, padding=1),    # 512 ⇒ 256
+            # size
+            nn.Conv2d(1, 32, kernel_size=4, stride=2, padding=1),    # 512 ⇒ 256
             nn.BatchNorm2d(32),            
             nn.LeakyReLU(0.2),
             nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),  # 256 ⇒ 128
@@ -17,7 +137,7 @@ class VAE(nn.Module):
             nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),  # 128 ⇒ 64
             nn.BatchNorm2d(128),
             nn.LeakyReLU(0.2),
-        )
+        )# the size by the end of here is 6  by 6
         self.fc_e = nn.Sequential(
             nn.Linear(128 * 16 * 16, 1024),
             nn.BatchNorm1d(1024),
@@ -40,7 +160,7 @@ class VAE(nn.Module):
             nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(32),
             nn.LeakyReLU(0.2),
-            nn.ConvTranspose2d(32, 3, kernel_size=4, stride=2, padding=1),
+            nn.ConvTranspose2d(32, 1, kernel_size=4, stride=2, padding=1),
             nn.Sigmoid()
         )
 
@@ -138,5 +258,12 @@ def loss_function(recon_x, x, mu, logvar):
     # of the encoded latent vectors (mu and logvar) approximates a standard normal distribution (mean = 0, variance = 1).
     return recon + kld
 
-
+def loss_function_2(recon_x, x):
+    rec_err = (recon_x - x) ** 2
+    recon = rec_err.mean()
+    #recon = F.binary_cross_entropy(recon_x, x, reduction='sum')
+    #kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    # Regularizes the latent space by ensuring that the distribution
+    # of the encoded latent vectors (mu and logvar) approximates a standard normal distribution (mean = 0, variance = 1).
+    return recon
 
