@@ -133,3 +133,4 @@ logs/
 checkpoints/
 results/
 wandb/
+*.avi

@@ -1,6 +1,8 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
+
+
 class AE(nn.Module):
     def __init__(self, latent_size, multiplier=4, img_size=64, vae=False):
         super(AE, self).__init__()
@@ -44,7 +46,8 @@ class AE(nn.Module):
                 nn.BatchNorm1d(2048),
                 nn.ReLU(True),
                 nn.Linear(2048, latent_size),
-            )# difference in here that i am mtulpliing the latent size by 2
+            )
+            # difference in here that i am mtulpliing the latent size by 2
         else:
             self.linear_enc = nn.Sequential(
                 nn.Linear(int(64 * multiplier) * self.fm*self.fm, 2048),
@@ -120,15 +123,186 @@ class AE(nn.Module):
         out = torch.tanh(out)
         return out
 
-class VAE(nn.Module):
 
+class VAE_new(nn.Module):
+    def __init__(self, z_dim=128):
+        super(VAE_new, self).__init__()
+
+        # Encode
+        self.conv_e1 = nn.Conv2d(3, 32, kernel_size=4, stride=2, padding=1)  # 224 -> 112
+        self.bn_e1 = nn.BatchNorm2d(32)
+        self.conv_e2 = nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1)  # 112 -> 56
+        self.bn_e2 = nn.BatchNorm2d(64)
+        self.conv_e3 = nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1)  # 56 -> 28
+        self.bn_e3 = nn.BatchNorm2d(128)
+        self.conv_e4 = nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1)  # 28 -> 14
+        self.bn_e4 = nn.BatchNorm2d(256)
+        # self.conv_e5 = nn.Conv2d(256, 512, kernel_size=4, stride=2, padding=1)  # 14 -> 7
+        # self.bn_e5 = nn.BatchNorm2d(512)
+
+        self.fc_e1 = nn.Linear(256 * 7 * 7, 1024)
+        self.bn_e6 = nn.BatchNorm1d(1024)
+        self.fc_e2 = nn.Linear(1024, z_dim * 2)
+
+        # Decode
+        self.fc_d1 = nn.Linear(z_dim, 1024)
+        self.bn_d1 = nn.BatchNorm1d(1024)
+        self.fc_d2 = nn.Linear(1024, 256 * 7 * 7)
+        self.bn_d2 = nn.BatchNorm1d(256 * 7 * 7)
+
+        self.conv_d2 = nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1)
+        self.bn_d4 = nn.BatchNorm2d(128)
+        self.conv_d3 = nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1)
+        self.bn_d5 = nn.BatchNorm2d(64)
+        self.conv_d4 = nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1)
+        self.bn_d6 = nn.BatchNorm2d(32)
+        self.conv_d5 = nn.ConvTranspose2d(32, 3, kernel_size=4, stride=2, padding=1)
+
+        self.z_dim = z_dim
+        self.initialize()
+
+    def encode(self, input):
+        x1 = F.leaky_relu(self.bn_e1(self.conv_e1(input)), 0.2)
+        x2 = F.leaky_relu(self.bn_e2(self.conv_e2(x1)), 0.2)
+        x3 = F.leaky_relu(self.bn_e3(self.conv_e3(x2)), 0.2)
+        x4 = F.leaky_relu(self.bn_e4(self.conv_e4(x3)), 0.2)
+
+        x = x4.view(-1, 256 * 7 * 7)
+        x = F.leaky_relu(self.bn_e6(self.fc_e1(x)), 0.2)
+        x = self.fc_e2(x)
+
+        return x[:, :self.z_dim], x[:, self.z_dim:], x1, x2, x3, x4
+
+    def reparameterize(self, mu, logvar):
+        if self.training:
+            std = logvar.mul(0.5).exp_()
+            eps = std.new(std.size()).normal_()
+            return eps.mul(std).add_(mu)
+        else:
+            return mu
+
+    def decode(self, z, x1, x2, x3, x4):
+        h = F.leaky_relu(self.bn_d1(self.fc_d1(z)), 0.2)
+        h = F.leaky_relu(self.bn_d2(self.fc_d2(h)), 0.2)
+        h = h.view(-1, 256, 7, 7)
+        h = F.leaky_relu(self.bn_d4(self.conv_d2(h + x4)), 0.2)
+        h = F.leaky_relu(self.bn_d5(self.conv_d3(h + x3)), 0.2)
+        h = F.leaky_relu(self.bn_d6(self.conv_d4(h + x2)), 0.2)
+        out = torch.sigmoid(self.conv_d5(h + x1))
+
+        return out
+
+    def initialize(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                nn.init.kaiming_normal_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.BatchNorm1d) or isinstance(m, nn.LayerNorm):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        mu, logvar, x1, x2, x3, x4 = self.encode(x)
+        z = self.reparameterize(mu, logvar)
+        self.mu = mu
+        self.logvar = logvar
+        return self.decode(z, x1, x2, x3, x4)
+
+## this is for smaller size image
+# class VAE_new(nn.Module):
+#     def __init__(self, z_dim=128):
+#         super(VAE_new, self).__init__()
+#
+#         # Encode
+#         self.conv_e1 = nn.Conv2d(3, 32, kernel_size=4, stride=2, padding=1)
+#         self.bn_e1 = nn.BatchNorm2d(32)
+#         self.conv_e2 = nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1)
+#         self.bn_e2 = nn.BatchNorm2d(64)
+#         self.conv_e3 = nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1)
+#         self.bn_e3 = nn.BatchNorm2d(128)
+#
+#         self.fc_e1 = nn.Linear(128 * 16 * 16, 1024)
+#         self.bn_e4 = nn.BatchNorm1d(1024)
+#         self.fc_e2 = nn.Linear(1024, z_dim * 2)
+#
+#         # Decode
+#         self.fc_d1 = nn.Linear(z_dim, 1024)
+#         self.bn_d1 = nn.BatchNorm1d(1024)
+#         self.fc_d2 = nn.Linear(1024, 128 * 16 * 16)
+#         self.bn_d2 = nn.BatchNorm1d(128 * 16 * 16)
+#
+#         self.conv_d1 = nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1)
+#         self.bn_d3 = nn.BatchNorm2d(64)
+#         self.conv_d2 = nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1)
+#         self.bn_d4 = nn.BatchNorm2d(32)
+#         self.conv_d3 = nn.ConvTranspose2d(32, 3, kernel_size=4, stride=2, padding=1)
+#
+#         self.z_dim = z_dim
+#         self.initialize()
+#
+#     def encode(self, input):
+#         x1 = F.leaky_relu(self.bn_e1(self.conv_e1(input)), 0.2)
+#         x2 = F.leaky_relu(self.bn_e2(self.conv_e2(x1)), 0.2)
+#         x3 = F.leaky_relu(self.bn_e3(self.conv_e3(x2)), 0.2)
+#
+#         x = x3.view(-1, 128 * 16 * 16)
+#         x = F.leaky_relu(self.bn_e4(self.fc_e1(x)), 0.2)
+#         x = self.fc_e2(x)
+#
+#         return x[:, :self.z_dim], x[:, self.z_dim:], x1, x2, x3
+#
+#     def reparameterize(self, mu, logvar):
+#         if self.training:
+#             std = logvar.mul(0.5).exp_()
+#             eps = std.new(std.size()).normal_()
+#             return eps.mul(std).add_(mu)
+#         else:
+#             return mu
+#
+#     def decode(self, z, x1, x2, x3):
+#         h = F.leaky_relu(self.bn_d1(self.fc_d1(z)), 0.2)
+#         h = F.leaky_relu(self.bn_d2(self.fc_d2(h)), 0.2)
+#         h = h.view(-1, 128, 16, 16)
+#
+#         h = F.leaky_relu(self.bn_d3(self.conv_d1(h + x3)), 0.2)
+#         h = F.leaky_relu(self.bn_d4(self.conv_d2(h + x2)), 0.2)
+#         out = torch.sigmoid(self.conv_d3(h + x1))
+#
+#         return out
+#
+#     def initialize(self):
+#         for m in self.modules():
+#             if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+#                 nn.init.kaiming_normal_(m.weight)
+#                 if m.bias is not None:
+#                     nn.init.constant_(m.bias, 0)
+#             elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.LayerNorm):
+#                 nn.init.constant_(m.weight, 1)
+#                 nn.init.constant_(m.bias, 0)
+#             elif isinstance(m, nn.Linear):
+#                 nn.init.xavier_uniform_(m.weight)
+#                 nn.init.constant_(m.bias, 0)
+#
+#     def forward(self, x):
+#         mu, logvar, x1, x2, x3 = self.encode(x)
+#         z = self.reparameterize(mu, logvar)
+#         self.mu = mu
+#         self.logvar = logvar
+#         return self.decode(z, x1, x2, x3)
+
+
+class VAE(nn.Module):
     def __init__(self, z_dim=128):
         super(VAE, self).__init__()
 
         # encode
         self.conv_e = nn.Sequential(
             # size
-            nn.Conv2d(1, 32, kernel_size=4, stride=2, padding=1),    # 512 ⇒ 256
+            nn.Conv2d(3, 32, kernel_size=4, stride=2, padding=1),    # 512 ⇒ 256
             nn.BatchNorm2d(32),            
             nn.LeakyReLU(0.2),
             nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),  # 256 ⇒ 128
@@ -139,7 +313,7 @@ class VAE(nn.Module):
             nn.LeakyReLU(0.2),
         )# the size by the end of here is 6  by 6
         self.fc_e = nn.Sequential(
-            nn.Linear(128 * 16 * 16, 1024),
+            nn.Linear(128 * 14 * 14, 1024),
             nn.BatchNorm1d(1024),
             nn.LeakyReLU(0.2),
             nn.Linear(1024, z_dim*2),
@@ -150,7 +324,7 @@ class VAE(nn.Module):
             nn.Linear(z_dim, 1024),
             nn.BatchNorm1d(1024),
             nn.LeakyReLU(0.2),
-            nn.Linear(1024, 128 * 16 * 16),
+            nn.Linear(1024, 128 * 14 * 14),
             nn.LeakyReLU(0.2)
         )
         self.conv_d = nn.Sequential(
@@ -160,7 +334,7 @@ class VAE(nn.Module):
             nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(32),
             nn.LeakyReLU(0.2),
-            nn.ConvTranspose2d(32, 1, kernel_size=4, stride=2, padding=1),
+            nn.ConvTranspose2d(32, 3, kernel_size=4, stride=2, padding=1),
             nn.Sigmoid()
         )
 
@@ -170,7 +344,7 @@ class VAE(nn.Module):
     def encode(self, input):
         # input is greyscale (1,128,128)
         x = self.conv_e(input) # the size is torch.Size([256, 128, 16, 16])
-        x = x.view(-1, 128*16*16)# you flatten everything
+        x = x.view(-1, 128*14*14)# you flatten everything
         # [256, 32768]
 
         x = self.fc_e(x)# [256,1024] returned size
@@ -212,13 +386,13 @@ class VAE(nn.Module):
         # you have an input of [256,512]
         # torch.Size([128, 512])
         h = self.fc_d(z)# full convelutions
-        h = h.view(-1, 128, 16, 16)
+        h = h.view(-1, 128, 14, 14)
         return self.conv_d(h)# unsampling
 
     def initialize(self):
         # this is very important
         for m in self.modules():
-            if isinstance(m, nn.Conv2d):
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
                 nn.init.kaiming_normal_(m.weight)
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
@@ -251,19 +425,16 @@ Total Loss: Sum of the reconstruction loss and KL divergence loss, balancing the
  # Reconstruction Loss:     recon = F.binary_cross_entropy(recon_x, x, reduction='sum')
  # Purpose: Measures how well the reconstructed data (recon_x) matches the original input data (x).
  # : Sums the loss over all elements, giving a single scalar value representing the total reconstruction error for the entire batch.
+
+
 def loss_function(recon_x, x, mu, logvar):
     recon = F.binary_cross_entropy(recon_x, x, reduction='sum')
     kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    # Regularizes the latent space by ensuring that the distribution
-    # of the encoded latent vectors (mu and logvar) approximates a standard normal distribution (mean = 0, variance = 1).
-    return recon + kld
+    return recon , kld
+
 
 def loss_function_2(recon_x, x):
     rec_err = (recon_x - x) ** 2
     recon = rec_err.mean()
-    #recon = F.binary_cross_entropy(recon_x, x, reduction='sum')
-    #kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    # Regularizes the latent space by ensuring that the distribution
-    # of the encoded latent vectors (mu and logvar) approximates a standard normal distribution (mean = 0, variance = 1).
     return recon
 
