@@ -14,34 +14,9 @@ from PIL import Image
 from datetime import datetime
 import random
 
-# from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
-
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-def combine_images(original, reconstructed):
-    # Convert PyTorch tensors to NumPy arrays and reshape to (batch_size, height, width)
-    original_images = original[:5].squeeze(1).detach().cpu().numpy()
-    reconstructed_images = reconstructed[:5].squeeze(1).detach().cpu().numpy()
-    # Create a grid to combine original and reconstructed images
-    num_images = original_images.shape[0]
-
-    combined_grid = np.zeros((num_images, 2, original_images.shape[1], original_images.shape[2]))
-    # print(combined_grid.shape)
-    # print(original_images.shape)
-
-    combined_grid[:, 0, :, :] = original_images
-    combined_grid[:, 1, :, :] = reconstructed_images
-
-    # Concatenate images along the width dimension to create a grid
-    ##grid_image = np.concatenate(combined_grid, axis=3)
-    ##grid_image = np.concatenate(combined_grid, axis=1)
-
-    # Convert the grid image back to PyTorch tensor
-    return combined_grid
-
 
 def fig2img(fig):
     """Convert a Matplotlib figure to a PIL Image and return it"""
@@ -53,30 +28,46 @@ def fig2img(fig):
     return img
 
 
-def train(model, train_loader, device, optimizer, epoch):
+def compute_mse_module(recon_batch, data):
+    mse_loss = torch.nn.MSELoss()
+    mse = mse_loss(recon_batch, data)
+    return mse.item()
+
+
+def train(model, train_loader, device, optimizer, epoch,loss_type):
     model.train()
     train_loss = 0
-    log_interval = 1  # Adjust this value as needed
-    with tqdm(total=len(train_loader), desc=f"Epoch {epoch + 1}", unit="batch") as pbar:
+    train_kld = 0
+    train_reconstruction = 0
+    train_mse = 0
+    wandb_images_images = []
+    with tqdm(total=len(train_loader), desc=f"Epoch {epoch+1}", unit="batch") as pbar:
         for batch_idx, data in enumerate(train_loader):
             data = data.to(device)
             optimizer.zero_grad()
             recon_batch = model(data)
-            loss = loss_function_2(recon_batch, data)
-            #loss = loss_function(recon_batch, data, model.mu, model.logvar)
+            if loss_type == "vae":
+                recon , kld = loss_function(recon_batch, data, model.mu, model.logvar)
+                loss = recon + kld
+                train_kld += kld.item()
+                train_mse += compute_mse_module(recon_batch, data)
+                train_reconstruction += recon.item()
+            elif loss_type == "mse":
+                loss = loss_function_2(recon_batch, data)
+            else:
+                raise ValueError(f"Unsupported loss type: {loss_type}. Please use 'vae' or 'mse'.")
             loss.backward()
             train_loss += loss.item()
             optimizer.step()
-            pbar.set_postfix({"Reconstruction Loss": loss.item()})
+            pbar.set_postfix({"Total Loss": loss.item()})
             pbar.update()
-            if (batch_idx + 1) == len(train_loader):
+            if (batch_idx + 1) == len(train_loader) :
                 original_images_plotting = data[:5].detach().cpu().numpy()
                 reconstructed_images_plotting = recon_batch[:5].detach().cpu().numpy()
-                wandb_images_images = []
                 for i, (original, reconstructed) in enumerate(zip(original_images_plotting,
                                                                   reconstructed_images_plotting)):
-                    original = (original * 255).astype(np.uint8).transpose(1, 2, 0)
-                    reconstructed = (reconstructed * 255).astype(np.uint8).transpose(1, 2, 0)
+                    original = (original*255).astype(np.uint8).transpose(1, 2, 0)
+                    reconstructed = (reconstructed*255).astype(np.uint8).transpose(1, 2, 0)
                     fig, (
                         orginal_img,
                         reconstructed_img,
@@ -87,100 +78,96 @@ def train(model, train_loader, device, optimizer, epoch):
                         dpi=96,
                     )
                     orginal_img.axis("off")
-                    orginal_img.imshow(original, cmap='gray')
-                    # orginal_img.imshow(original)
-
+                    orginal_img.imshow(original)
                     orginal_img.set_title("Org", fontsize=12)
                     reconstructed_img.axis("off")
-                    reconstructed_img.imshow(reconstructed, cmap='gray')
+                    reconstructed_img.imshow(reconstructed, )
                     reconstructed_img.set_title("Reconst", fontsize=12)
                     final_image = fig2img(fig)
                     ##final_image.save(f"comparison_{i}.png")
-                    # plt.show()
+                    #plt.show()
                     plt.close(fig)
                     plt.close("all")
                     wandb_images_images.append(wandb.Image(final_image))
     train_loss /= len(train_loader.dataset)
-    wandb.log({"Paired Images": wandb_images_images, "Reconstruction Loss over batch": train_loss})
+    train_mse /= len(train_loader.dataset)
+    if loss_type == "vae":
+        train_kld /= len(train_loader.dataset)
+        train_reconstruction /= len(train_loader.dataset)
+        wandb.log({"train/Paired Images": wandb_images_images,"train/Total Loss": train_loss,
+                   "train/RECON":train_reconstruction,"train/KLD":train_kld,"train/mse":train_mse}, step=epoch)
+    elif loss_type == "mse":
+        wandb.log({"train/Paired Images": wandb_images_images,"train/Total Loss": train_loss}, step=epoch)
+    else:
+        raise ValueError(f"Unsupported loss type: {loss_type}. Please use 'vae' or 'mse'.")
     return train_loss
 
 
-def eval(model, test_loader, device):
+def validation(model, test_loader, device, epoch,loss_type):
     model.eval()
-    x_0 = iter(test_loader).next()
-    with torch.no_grad():
-        x_vae = model(x_0.to(device)).detach().cpu().numpy()
-
-
-# for testing
-# what is happening in here ?
-# Your EBM (Energy-Based Model) function seems to be designed for testing a given model
-# by performing iterative gradient-based updates on the input data x_0
-def EBM(model, test_loader, device):
-    model.train()
-    x_0 = iter(test_loader).next()
-    alpha = 0.05
-    lamda = 1
-    # alpha = 0.05 and lamda = 1: Hyperparameters for the gradient update steps.
-    x_0 = x_0.to(device).clone().detach().requires_grad_(True)
-    # Moves the batch to the specified device, clones it, detaches it from the computation graph, and enables gradient computation.
-    recon_x = model(x_0).detach()
-    # Passes x_0 through the model and detaches the output to avoid computing gradients for this part of the graph.
-    loss = F.binary_cross_entropy(x_0, recon_x, reduction='sum')
-    #  Computes the reconstruction loss between the input and the reconstructed output.
-    loss.backward(retain_graph=True)
-    #  Computes the gradients of the loss with respect to x_0.
-
-    x_grad = x_0.grad.data  # : Retrieves the gradients of x_0
-    x_t = x_0 - alpha * x_grad * (x_0 - recon_x) ** 2
-    #  Updates x_0 based on the gradients and the difference between x_0 and the reconstruction.
-    for i in range(15):
-        # A loop of 15 iterations is used to refine x_t
-        recon_x = model(x_t).detach()
-        loss = F.binary_cross_entropy(x_t, recon_x, reduction='sum') + lamda * torch.abs(x_t - x_0).sum()
-        loss.backward(retain_graph=True)
-
-        x_grad = x_0.grad.data
-        eps = 0.001
-        # there is no alpha
-        x_t = x_t - eps * x_grad * (x_t - recon_x) ** 2
-        iterative_plot(x_t.detach().cpu().numpy(), i)
-
-
-# gif
-def iterative_plot(x_t, j):
-    plt.figure(figsize=(15, 4))
-    for i in range(10):
-        plt.subplot(1, 10, i + 1)
-        plt.xticks([])
-        plt.yticks([])
-        plt.imshow(x_t[i][0], cmap='gray')
-    plt.subplots_adjust(wspace=0., hspace=0.)
-    plt.savefig("./results/{}.png".format(j))
-    # plt.show()
-
-
-# def plot_reconstructed_images(model, data_loader, num_images=10):
-#     model.eval()
-#
-#     with tqdm(total=len(data_loader), unit="batch") as pbar:
-#         for batch_idx, data in enumerate(data_loader):
-#             with torch.no_grad():
-#                 recon_images, = model(data)
-#
-#                 fig, axes = plt.subplots(nrows=2, ncols=num_images, sharex=True, sharey=True, figsize=(15, 4))
-#
-#                 for images, row in zip([data, recon_images], axes):
-#                     for img, ax in zip(images, row):
-#                         ax.imshow(img.cpu().numpy().squeeze(), cmap='gray')
-#                         ax.get_xaxis().set_visible(False)
-#                         ax.get_yaxis().set_visible(False)
+    valid_loss = 0
+    valid_kld = 0
+    valid_mse = 0
+    valid_reconstruction = 0
+    wandb_images_images = []
+    with tqdm(total=len(test_loader), desc=f"Epoch {epoch+1}", unit="batch") as pbar:
+        for batch_idx, data in enumerate(test_loader):
+            data = data.to(device)
+            with torch.no_grad():
+                recon_batch = model(data)
+                if loss_type == "vae":
+                    recon, kld = loss_function(recon_batch, data, model.mu, model.logvar)
+                    loss = recon + kld
+                    valid_kld += kld.item()
+                    valid_reconstruction += recon.item()
+                    valid_mse += compute_mse_module(recon_batch, data)
+                elif loss_type == "mse":
+                    loss = loss_function_2(recon_batch, data)
+                else:
+                    raise ValueError(f"Unsupported loss type: {loss_type}. Please use 'vae' or 'mse'.")
+                valid_loss += loss.item()
+                pbar.set_postfix({"Total Loss": loss.item()})
+                pbar.update()
+                original_images_plotting = data[5].detach().cpu().numpy()
+                reconstructed_images_plotting = recon_batch[5].detach().cpu().numpy()
+                original = (original_images_plotting*255).astype(np.uint8).transpose(1, 2, 0)
+                reconstructed = (reconstructed_images_plotting*255).astype(np.uint8).transpose(1, 2, 0)
+                fig, ( orginal_img, reconstructed_img,
+                    ) = plt.subplots(
+                        nrows=1,
+                        ncols=2,
+                        figsize=((original.shape[1] * 2) / 96, original.shape[0] / 96),
+                        dpi=96,
+                    )
+                orginal_img.axis("off")
+                orginal_img.imshow(original)
+                orginal_img.set_title("Org", fontsize=12)
+                reconstructed_img.axis("off")
+                reconstructed_img.imshow(reconstructed, )
+                reconstructed_img.set_title("Reconst", fontsize=12)
+                final_image = fig2img(fig)
+                plt.close(fig)
+                plt.close("all")
+                wandb_images_images.append(wandb.Image(final_image))
+    valid_loss /= len(test_loader.dataset)
+    if loss_type == "vae":
+        valid_kld /= len(test_loader.dataset)
+        valid_reconstruction /= len(test_loader.dataset)
+        wandb.log({"Valid/Paired Images": wandb_images_images,"Valid/Total Loss": valid_loss,
+                   "Valid/RECON": valid_reconstruction,"Valid/KLD": valid_kld,
+                   "Valid/mse": valid_mse}, step=epoch)
+    elif loss_type == "mse":
+        wandb.log({"Valid/Paired Images": wandb_images_images,"Valid/Total Loss": valid_loss}, step=epoch)
+    else:
+        raise ValueError(f"Unsupported loss type: {loss_type}. Please use 'vae' or 'mse'.")
+    return valid_loss
 
 
 def main(config_Dict):
     train_loader = return_MVTecAD_loader(image_dir=r"D:\github_directories\foriegn\SEQ00003_MIXED_COUNTED_313",
                                          batch_size=config_Dict["batch_size"], train=True)
-
+    test_loader = return_MVTecAD_loader(image_dir=r"D:\github_directories\foriegn\SEQ00004_MIXED_FOREIGN_PARTICLE",
+                                        batch_size=config_Dict["batch_size"], train=False)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
     model = UNetModel(in_channels=config_Dict['unet_inout_channels'],
@@ -197,30 +184,31 @@ def main(config_Dict):
                       num_head_channels =config_Dict['unet_num_heads_channels'],
                       resblock_updown=config_Dict['unet_res_updown'],
                       ).to(device)
-    total_params = sum(p.numel() for p in model.parameters())
-    total_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-    print(f"Total params: {total_params}")
-    print(f"Total trainable params: {total_trainable_params}")
     # model = VAE(z_dim=config_Dict["z_dim"]).to(device)
     #model = VAE_new(z_dim=config_Dict["z_dim"]).to(device)
 
     # model = AE(latent_size=config_dict["z_dim"],img_size=256,vae=False).to(device)
-
+    total_params = sum(p.numel() for p in model.parameters())
+    total_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Total params: {total_params}")
+    print(f"Total trainable params: {total_trainable_params}")
     wandb.watch(model, log='gradients', log_freq=10)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config_Dict["lr"])
     num_epochs = config_Dict["epoch"]
     for epoch in range(num_epochs):
-        loss = train(model=model, train_loader=train_loader, device=device, optimizer=optimizer, epoch=epoch)
+        print("Starting Training for epoch {}".format(epoch + 1))
+        loss = train(model=model, train_loader=train_loader, device=device, optimizer=optimizer, epoch=epoch,
+                     loss_type=config_Dict["loss_type"])
+        print("Starting Testing for epoch {}".format(epoch + 1))
+        loss_valid = validation(model=model, test_loader=test_loader, device=device, epoch=epoch,
+                                loss_type=config_Dict["loss_type"])
+        print("Average losses for epoch {}".format(epoch + 1))
         print('epoch [{}/{}], train loss: {:.4f}'.format(epoch + 1, num_epochs, loss))
-        if (epoch + 1) % 1 == 0:
+        print('epoch [{}/{}], validation loss: {:.4f}'.format(epoch + 1, num_epochs, loss_valid))
+        if (epoch + 1) % config_Dict["saving_epoch"] == 0:
             torch.save(model.state_dict(), os.path.join(checkpoints_dir, "{}.pth".format(epoch + 1)))
-
-    test_loader = return_MVTecAD_loader(image_dir=r"D:\github_directories\foriegn\SEQ00004_MIXED_FOREIGN_PARTICLE",
-                                        batch_size=10, train=False)
-    ##plot_reconstructed_images(model, test_loader)
-    ##plt.show()
 
 
 if __name__ == "__main__":
@@ -253,6 +241,8 @@ if __name__ == "__main__":
                    "unet_heads": 4,
                    "unet_num_heads_channels": 4,
                    "unet_res_updown": False,
+                   "saving_epoch": 1,
+                   "loss_type": "mse",
                    }
 
     wandb.init(

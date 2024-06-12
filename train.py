@@ -38,7 +38,7 @@ def train(model, train_loader, device, optimizer, epoch,loss_type):
     train_kld = 0
     train_reconstruction = 0
     train_mse = 0
-    log_interval = 1  # Adjust this value as needed
+    wandb_images_images = []
     with tqdm(total=len(train_loader), desc=f"Epoch {epoch+1}", unit="batch") as pbar:
         for batch_idx, data in enumerate(train_loader):
             data = data.to(device)
@@ -62,7 +62,6 @@ def train(model, train_loader, device, optimizer, epoch,loss_type):
             if (batch_idx + 1) == len(train_loader) :
                 original_images_plotting = data[:5].detach().cpu().numpy()
                 reconstructed_images_plotting = recon_batch[:5].detach().cpu().numpy()
-                wandb_images_images = []
                 for i, (original, reconstructed) in enumerate(zip(original_images_plotting,
                                                                   reconstructed_images_plotting)):
                     original = (original*255).astype(np.uint8).transpose(1, 2, 0)
@@ -108,6 +107,7 @@ def validation(model, test_loader, device, epoch,loss_type):
     valid_kld = 0
     valid_mse = 0
     valid_reconstruction = 0
+    wandb_images_images = []
     with tqdm(total=len(test_loader), desc=f"Epoch {epoch+1}", unit="batch") as pbar:
         for batch_idx, data in enumerate(test_loader):
             data = data.to(device)
@@ -123,35 +123,30 @@ def validation(model, test_loader, device, epoch,loss_type):
                     loss = loss_function_2(recon_batch, data)
                 else:
                     raise ValueError(f"Unsupported loss type: {loss_type}. Please use 'vae' or 'mse'.")
+                valid_loss += loss.item()
                 pbar.set_postfix({"Total Loss": loss.item()})
                 pbar.update()
-            if (batch_idx + 1) == len(test_loader) :
-                original_images_plotting = data[:5].detach().cpu().numpy()
-                reconstructed_images_plotting = recon_batch[:5].detach().cpu().numpy()
-                wandb_images_images = []
-                for i, (original, reconstructed) in enumerate(zip(original_images_plotting,
-                                                                  reconstructed_images_plotting)):
-                    original = (original*255).astype(np.uint8).transpose(1, 2, 0)
-                    reconstructed = (reconstructed*255).astype(np.uint8).transpose(1, 2, 0)
-                    fig, (
-                        orginal_img,
-                        reconstructed_img,
+                original_images_plotting = data[5].detach().cpu().numpy()
+                reconstructed_images_plotting = recon_batch[5].detach().cpu().numpy()
+                original = (original_images_plotting*255).astype(np.uint8).transpose(1, 2, 0)
+                reconstructed = (reconstructed_images_plotting*255).astype(np.uint8).transpose(1, 2, 0)
+                fig, ( orginal_img, reconstructed_img,
                     ) = plt.subplots(
                         nrows=1,
                         ncols=2,
                         figsize=((original.shape[1] * 2) / 96, original.shape[0] / 96),
                         dpi=96,
                     )
-                    orginal_img.axis("off")
-                    orginal_img.imshow(original)
-                    orginal_img.set_title("Org", fontsize=12)
-                    reconstructed_img.axis("off")
-                    reconstructed_img.imshow(reconstructed, )
-                    reconstructed_img.set_title("Reconst", fontsize=12)
-                    final_image = fig2img(fig)
-                    plt.close(fig)
-                    plt.close("all")
-                    wandb_images_images.append(wandb.Image(final_image))
+                orginal_img.axis("off")
+                orginal_img.imshow(original)
+                orginal_img.set_title("Org", fontsize=12)
+                reconstructed_img.axis("off")
+                reconstructed_img.imshow(reconstructed, )
+                reconstructed_img.set_title("Reconst", fontsize=12)
+                final_image = fig2img(fig)
+                plt.close(fig)
+                plt.close("all")
+                wandb_images_images.append(wandb.Image(final_image))
     valid_loss /= len(test_loader.dataset)
     if loss_type == "vae":
         valid_kld /= len(test_loader.dataset)
@@ -189,13 +184,15 @@ def main(config_Dict):
     optimizer = torch.optim.Adam(model.parameters(), lr=config_Dict["lr"])
     num_epochs = config_Dict["epoch"]
     for epoch in range(num_epochs):
+        print("Starting Training for epoch {}".format(epoch + 1))
         loss = train(model=model,train_loader=train_loader,device=device,optimizer=optimizer,epoch=epoch,
                      loss_type=config_Dict["loss_type"])
+        print("Starting Testing for epoch {}".format(epoch + 1))
         loss_valid = validation(model=model,test_loader=test_loader,device=device,epoch=epoch,
                      loss_type=config_Dict["loss_type"])
+        print("Average losses for epoch {}".format(epoch + 1))
         print('epoch [{}/{}], train loss: {:.4f}'.format(epoch + 1,num_epochs,loss))
         print('epoch [{}/{}], validation loss: {:.4f}'.format(epoch + 1,num_epochs,loss_valid))
-
         if (epoch+1) % config_Dict["saving_epoch"] == 0:
             torch.save(model.state_dict(), os.path.join(checkpoints_dir,"{}.pth".format(epoch+1)))
 if __name__ == "__main__":
@@ -210,14 +207,14 @@ if __name__ == "__main__":
         torch.backends.cudnn.benchmark = True
 
     print(f"Starting a new wandb run with id {run_id}")
-    config_dict = {"batch_size": 256,
-                   "epoch": 200,
+    config_dict = {"batch_size": 16,
+                   "epoch": 20,
                    "lr": 5e-4,
                    "z_dim": 512,
                    "model_id":'vae_reconstruction',
                    "tag":"VAE model",
                    "loss_type":"vae",
-                   "saving_epoch":10
+                   "saving_epoch":1
                    }
     wandb.init(
         # set the wandb project where this run will be logged

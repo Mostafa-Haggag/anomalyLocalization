@@ -79,7 +79,7 @@ def return_MVTecAD_loader(image_dir, batch_size=256, train=True):
     data_loader = data.DataLoader(dataset=dataset,
                                   batch_size=batch_size,
                                   shuffle=train,
-                                  drop_last=train,
+                                  drop_last=True,
                                   num_workers=8,
                                   pin_memory=True)
     return data_loader
