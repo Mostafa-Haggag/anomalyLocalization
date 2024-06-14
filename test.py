@@ -1,5 +1,5 @@
 
-from network import VAE_new
+from network import VAE_new,VAE
 import torch
 import random
 from dataset import return_MVTecAD_loader
@@ -50,31 +50,40 @@ def plot_bounding_boxes(original, reconstructed, threshold=0.5):
     difference = np.abs(original - reconstructed)
 
     # Threshold the difference
-    difference_gray = np.max(difference, axis=2)
-    mask = (difference_gray > threshold).astype(np.uint8)
+    difference_gray = np.max(difference, axis=0)
+    # difference_gray = np.sum(difference, axis=0)
 
-    # Convert mask to uint8
-    mask = (mask * 255).astype(np.uint8)
+    mask = ((difference_gray > threshold)*255).astype(np.uint8)
+    difference_gray = np.sum(difference, axis=0)
+
     if mask is None or mask.size == 0:
         raise ValueError("The mask image is empty or not valid.")
 
     # Ensure the mask is in the correct format (binary image)
     if len(mask.shape) != 2 or mask.dtype != np.uint8:
         raise ValueError("The mask image must be a binary image of type np.uint8.")
+    original_bgr = np.transpose(original, (1, 2, 0))  # Convert to (H, W, 3)
+    original_bgr = (original_bgr * 255).astype(np.uint8)  # Scale to [0, 255]
+    original_bgr = cv2.cvtColor(original_bgr, cv2.COLOR_RGB2BGR)
+    red_channel = original_bgr[:, :, 2]
 
+    # Applica la maschera al canale rosso
+    red_channel = np.maximum(red_channel, mask)
+    # Ricombina i canali dell'immagine
+    original_bgr[:, :, 2] = red_channel
     # Find contours
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Draw bounding boxes on the original image
-    for contour in contours:
-        if cv2.contourArea(contour) > 200:  # Filter small contours if needed
-            print("Contour detected")
-            x, y, w, h = cv2.boundingRect(contour)
-            try:
-                cv2.rectangle(original, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            except cv2.error as e:
-                print(x,y,w,h)
-    return original
+    # contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    #
+    # # Draw bounding boxes on the original image
+    # for contour in contours:
+    #     if cv2.contourArea(contour) > 200:  # Filter small contours if needed
+    #         print("Contour detected")
+    #         x, y, w, h = cv2.boundingRect(contour)
+    #         try:
+    #             cv2.rectangle(original, (x, y), (x + w, y + h), (0, 255, 0), 2)
+    #         except cv2.error as e:
+    #             print(x,y,w,h)
+    return original_bgr
 
 
 if __name__ == '__main__':
@@ -95,9 +104,9 @@ if __name__ == '__main__':
                    }
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model = VAE_new(z_dim=config_dict["z_dim"]).to(device)
+    model = VAE(z_dim=config_dict["z_dim"]).to(device)
     path_model = \
-        r"D:\github_directories\anomalyLocalization\checkpoints\20240610_142651_vae_reconstruction_long_run\30.pth"
+        r"D:\github_directories\anomalyLocalization\checkpoints\20240612_105337_vae_reconstruction_VAE model\20.pth"
     model.load_state_dict(torch.load(path_model), strict=True)
     test_loader = return_MVTecAD_loader(image_dir=r"D:\github_directories\foriegn\SEQ00004_MIXED_FOREIGN_PARTICLE",
                                          batch_size=config_dict["batch_size"], train=False)
@@ -116,8 +125,7 @@ if __name__ == '__main__':
             # reconstructed = (x_output - x_output.min()) / (x_output.max() - x_output.min())
             reconstructed = x_output
             new_frame = plot_bounding_boxes(original=original,reconstructed=reconstructed,threshold=0.1)
-            new_frame_2 = cv2.cvtColor(np.clip(new_frame.transpose(1, 2, 0)*255,0,255).astype(np.uint8),
-                                       cv2.COLOR_RGB2BGR)
+            new_frame_2 = new_frame
             new_frame_reconstruced = cv2.cvtColor(np.clip(reconstructed.transpose(1, 2, 0)*255,0,255).astype(np.uint8),
                                        cv2.COLOR_RGB2BGR)
             output_sequence_reconstruced.append(new_frame_reconstruced)

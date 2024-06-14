@@ -534,3 +534,183 @@ class UNetModel(nn.Module):
             h = module(h )
         h = h.type(x.dtype)
         return self.out(h)
+
+
+class UNetModel_noskipp(nn.Module):
+    def __init__(
+            self,
+            in_channels=1,
+            model_channels=32,
+            out_channels=1,
+            num_res_blocks=1,
+            attention_resolutions=(2,4,8),
+            dropout=0.0,
+            channel_mult=(1, 2, 4, 8),
+            conv_resample=True,
+            dims=2,
+            use_checkpoint=False,
+            num_heads=4,
+            num_head_channels=-1,
+            resblock_updown=False,
+    ):
+        super().__init__()
+
+        self.in_channels = in_channels
+        self.model_channels = model_channels
+        self.out_channels = out_channels
+        self.num_res_blocks = num_res_blocks
+        self.attention_resolutions = attention_resolutions
+        self.dropout = dropout
+        self.channel_mult = channel_mult
+        self.conv_resample = conv_resample
+        self.use_checkpoint = use_checkpoint
+        self.dtype = th.float32
+        self.num_heads = num_heads
+        self.num_head_channels = num_head_channels
+
+        time_embed_dim = model_channels * 4
+        self.time_embed = nn.Sequential(
+            linear(model_channels, time_embed_dim),
+            nn.SiLU(),
+            linear(time_embed_dim, time_embed_dim),
+        )
+
+        ch = input_ch = int(channel_mult[0] * model_channels)
+        self.input_blocks = nn.ModuleList(
+            [nn.Sequential(conv_nd(dims, in_channels, ch, 3, padding=1))]
+        )
+        self._feature_size = ch
+        input_block_chans = [ch]
+        ds = 1
+        for level, mult in enumerate(channel_mult):
+            for _ in range(num_res_blocks):
+                layers = [
+                    ResBlock(
+                        channels=ch,
+                        dropout=dropout,
+                        out_channels=int(mult * model_channels),
+                        dims=dims,
+                        use_checkpoint=use_checkpoint,
+                    )
+                ]
+                ch = int(mult * model_channels)
+                if ds in attention_resolutions:
+                    layers.append(
+                        AttentionBlock(
+                            channels=ch,
+                            use_checkpoint=use_checkpoint,
+                            num_heads=num_heads,
+                            num_head_channels=num_head_channels,
+                        )
+                    )
+                self.input_blocks.append(nn.Sequential(*layers))
+                self._feature_size += ch
+                input_block_chans.append(ch)
+            if level != len(channel_mult) - 1:
+                out_ch = ch
+                self.input_blocks.append(
+                    nn.Sequential(
+                        ResBlock(
+                            channels=ch,
+                            dropout=dropout,
+                            out_channels=out_ch,
+                            dims=dims,
+                            use_checkpoint=use_checkpoint,
+                            down=True,
+                        )
+                        if resblock_updown
+                        else Downsample(
+                            ch, conv_resample, dims=dims, out_channels=out_ch
+                        )
+                    )
+                )
+                ch = out_ch
+                input_block_chans.append(ch)
+                ds *= 2
+                self._feature_size += ch
+
+        self.middle_block = nn.Sequential(
+            ResBlock(
+                channels=ch,
+                dropout= dropout,
+                dims=dims,
+                use_checkpoint=use_checkpoint,
+            ),
+            AttentionBlock(
+                channels=ch,
+                use_checkpoint=use_checkpoint,
+                num_heads=num_heads,
+                num_head_channels=num_head_channels,
+            ),
+            ResBlock(
+                channels=ch,
+                dropout=dropout,
+                dims=dims,
+                use_checkpoint=use_checkpoint,
+            ),
+        )
+        self._feature_size += ch
+
+        self.output_blocks = nn.ModuleList([])
+        for level, mult in list(enumerate(channel_mult))[::-1]:
+            for i in range(num_res_blocks + 1):
+                ich = input_block_chans.pop()
+                layers = [
+                    ResBlock(
+                        channels=ch,
+                        dropout=dropout,
+                        out_channels=int(model_channels * mult),
+                        dims=dims,
+                        use_checkpoint=use_checkpoint,
+                    )
+                ]
+                ch = int(model_channels * mult)
+                if ds in attention_resolutions:
+                    layers.append(
+                        AttentionBlock(
+                            channels=ch,
+                            use_checkpoint=use_checkpoint,
+                            num_heads=num_heads,
+                            num_head_channels=num_head_channels,
+                        )
+                    )
+                if level and i == num_res_blocks:
+                    out_ch = ch
+                    layers.append(
+                        ResBlock(
+                            channels=ch,
+                            dropout=dropout,
+                            out_channels=out_ch,
+                            dims=dims,
+                            use_checkpoint=use_checkpoint,
+                            up=True,
+                        )
+                        if resblock_updown
+                        else Upsample(ch, conv_resample, dims=dims, out_channels=out_ch)
+                    )
+                    ds //= 2
+                self.output_blocks.append(nn.Sequential(*layers))
+                self._feature_size += ch
+
+        self.out = nn.Sequential(
+            normalization(ch),
+            nn.SiLU(),
+            zero_module(conv_nd(dims, input_ch, out_channels, 3, padding=1)),
+        )
+
+    def forward(self, x, ):
+        """
+        Apply the model to an input batch.
+        :param x: an [N x C x ...] Tensor of inputs.
+        """
+
+        hs = []
+        h = x.type(self.dtype)
+        for module in self.input_blocks:
+            h = module(h)
+            hs.append(h)
+        h = self.middle_block(h)
+        for module in self.output_blocks:
+            h = module(h)
+        h = h.type(x.dtype)
+        return self.out(h)

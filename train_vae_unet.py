@@ -4,7 +4,7 @@ from torch.nn import functional as F
 from dataset import return_MVTecAD_loader
 from network import VAE, loss_function, AE, loss_function_2, VAE_new
 #from unet import UNetModel
-from vae_unet_base import VAEUNET
+from vae_unet_base import VAEUNET,VAEUNET_noskipp
 import matplotlib.pyplot as plt
 import logging
 import wandb
@@ -72,7 +72,7 @@ def train(model, train_loader, device, optimizer, epoch,loss_type):
             optimizer.zero_grad()
             recon_batch, mu, logvar = model(data)
             if loss_type == "vae":
-                recon , kld = loss_function(recon_batch, data, model.mu, model.logvar)
+                recon , kld = loss_function(recon_batch, data, mu, logvar)
                 loss = recon + kld
                 train_kld += kld.item()
                 train_mse += compute_mse_module(recon_batch, data)
@@ -141,7 +141,7 @@ def validation(model, test_loader, device, epoch,loss_type):
             with torch.no_grad():
                 recon_batch, mu, logvar = model(data)
                 if loss_type == "vae":
-                    recon, kld = loss_function(recon_batch, data, model.mu, model.logvar)
+                    recon, kld = loss_function(recon_batch, data, mu, logvar)
                     loss = recon + kld
                     valid_kld += kld.item()
                     valid_reconstruction += recon.item()
@@ -254,8 +254,8 @@ if __name__ == "__main__":
                    "epoch": 20,
                    "lr": 5e-4,
                    "z_dim": 512,
-                   "model_id": 'u_net_reo',
-                   "tag": "long_run",
+                   "model_id": 'VAE_with_unet_design',
+                   "tag": "Vae",
                    "unet_inout_channels": 3,
                    "unet_inplanes": 16,
                    "unet_image_size": 112,
@@ -270,7 +270,7 @@ if __name__ == "__main__":
                    "unet_num_heads_channels": 4,
                    "unet_res_updown": False,
                    "loss_type": "vae",
-                   "saving_epoch": 10
+                   "saving_epoch": 1
                    }
 
     wandb.init(

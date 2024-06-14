@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.nn import functional as F
 import glob
+import cv2
 
 
 class CenterCrop:
@@ -41,7 +42,14 @@ class MVTecAD(data.Dataset):
         """Return one image"""
         image_path = self.image_paths[index]
         #image = Image.open(image_path).convert('L')  # Convert to grayscale
-        image = Image.open(image_path).convert('RGB')
+        image = Image.open(image_path)
+        # opencv_image = np.array(image)
+        #
+        # opencv_image = cv2.cvtColor(opencv_image, cv2.COLOR_RGB2BGR)
+        # gaussian_blurred = cv2.GaussianBlur(opencv_image, (15, 15), 0)
+        # enhanced_image = cv2.convertScaleAbs(gaussian_blurred, alpha=1.5, beta=0)
+        # enhanced_image_rgb = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2RGB)
+        # image = Image.fromarray(enhanced_image_rgb)
 
         #image = Image.open(image_path)  # not gray scale as picture is colored
 
@@ -57,21 +65,21 @@ class MVTecAD(data.Dataset):
 def return_MVTecAD_loader(image_dir, batch_size=256, train=True):
     """Build and return a data loader."""
     transform = []
-    mean = [0.5, 0.5, 0.5]  # (assuming grayscale or RGB)
-    std = [0.5, 0.5, 0.5]  # (assuming grayscale or RGB)
+    # mean = [0.5, 0.5, 0.5]  # (assuming grayscale or RGB)
+    # std = [0.5, 0.5, 0.5]  # (assuming grayscale or RGB)
     mean = [0.0622145,  0.0864737,  0.07538847]
     std = [0.09039213, 0.08525948, 0.09549119]
     # Desired output size of the crop
     crop_size = (400, 1936)  # Desired crop size
     #CenterCrop(crop_size)
     #transform.append(CenterCrop(crop_size))
-    transform.append(T.Resize((112, 112)))
+    transform.append(T.Resize((64, 64)))
 
     #transform.append(T.RandomCrop((128,128)))
     #transform.append(T.RandomHorizontalFlip(p=0.5))
     #transform.append(T.RandomVerticalFlip(p=0.5))
     transform.append(T.ToTensor())
-    ##transform.append(T.Normalize(mean, std))
+    # transform.append(T.Normalize(mean, std))
     transform = T.Compose(transform)
 
     dataset = MVTecAD(image_dir, transform)

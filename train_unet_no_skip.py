@@ -3,7 +3,7 @@ import torch
 from torch.nn import functional as F
 from dataset import return_MVTecAD_loader
 from network import VAE, loss_function, AE, loss_function_2, VAE_new
-from unet import UNetModel
+from unet import UNetModel_noskipp
 import matplotlib.pyplot as plt
 import logging
 import wandb
@@ -13,6 +13,7 @@ import io
 from PIL import Image
 from datetime import datetime
 import random
+from torchvision.transforms import transforms
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -41,6 +42,12 @@ def train(model, train_loader, device, optimizer, epoch,loss_type):
     train_reconstruction = 0
     train_mse = 0
     wandb_images_images = []
+    invTrans = transforms.Compose([transforms.Normalize(mean=[0., 0., 0.],
+                                                        std=[1 / 0.0622145, 1 / 0.0864737, 1 / 0.07538847]),
+                                   transforms.Normalize(mean=[-0.09039213, -0.08525948, -0.09549119],
+                                                        std=[1., 1., 1.]),
+                                   ])
+
     with tqdm(total=len(train_loader), desc=f"Epoch {epoch+1}", unit="batch") as pbar:
         for batch_idx, data in enumerate(train_loader):
             data = data.to(device)
@@ -79,6 +86,8 @@ def train(model, train_loader, device, optimizer, epoch,loss_type):
                     )
                     orginal_img.axis("off")
                     orginal_img.imshow(original)
+                    orginal_img.imshow(original)
+
                     orginal_img.set_title("Org", fontsize=12)
                     reconstructed_img.axis("off")
                     reconstructed_img.imshow(reconstructed, )
@@ -164,13 +173,13 @@ def validation(model, test_loader, device, epoch,loss_type):
 
 
 def main(config_Dict):
-    train_loader = return_MVTecAD_loader(image_dir=r"D:\github_directories\foriegn\SEQ00003_MIXED_COUNTED_313",
+    train_loader = return_MVTecAD_loader(image_dir=r"D:\github_directories\foriegn\grey_plate_v_shape\SEQ00003_MIXED",
                                          batch_size=config_Dict["batch_size"], train=True)
-    test_loader = return_MVTecAD_loader(image_dir=r"D:\github_directories\foriegn\SEQ00004_MIXED_FOREIGN_PARTICLE",
+    test_loader = return_MVTecAD_loader(image_dir=r"D:\github_directories\foriegn\grey_plate_v_shape\SEQ00004_MIXED_FOREIGN_PARTICLE",
                                         batch_size=config_Dict["batch_size"], train=False)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
-    model = UNetModel(in_channels=config_Dict['unet_inout_channels'],
+    model = UNetModel_noskipp(in_channels=config_Dict['unet_inout_channels'],
                       model_channels=config_Dict['unet_inplanes'],
                       out_channels=config_Dict['unet_inout_channels'],
                       num_res_blocks=config_Dict['unet_residual'],
@@ -228,7 +237,7 @@ if __name__ == "__main__":
                    "lr": 5e-4,
                    "z_dim": 512,
                    "model_id": 'UNET_DESIGN',
-                   "tag": "u_net_model",
+                   "tag": "no_skip_v_shape_grey_pill_blue",
                    "unet_inout_channels": 3,
                    "unet_inplanes": 16,
                    "unet_residual": 1,
