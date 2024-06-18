@@ -214,11 +214,11 @@ if __name__ == "__main__":
         torch.backends.cudnn.benchmark = True
 
     print(f"Starting a new wandb run with id {run_id}")
-    config_dict = {"batch_size": 64,
+    config_dict = {"batch_size": 32,
                    "epoch": 20,
                    "lr":  0.005,
                    "z_dim": 128,
-                    "image_size": 64,
+                    "image_size": 128,
                    "model_id": 'VAE_pytorch',
                    "tag": "blue_pill",
                    "loss_type": "vae",
