@@ -4,6 +4,10 @@ import cv2
 import os
 import json
 from tqdm import tqdm
+from sklearn.metrics import roc_auc_score
+from sklearn.metrics import confusion_matrix
+from PIL import Image
+
 def makeVideoFromImageArray(output_filename, image_list):
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
     # Defines the codec to be used for the video. XVID is a popular video codec.
@@ -53,6 +57,23 @@ def load_images(folder_path):
                 print(f"Failed to load image: {filename}")
     return images
 
+
+def load_images_gn(folder_path):
+    images = []
+    for filename in os.listdir(folder_path):
+        if filename.endswith(".bmp") or filename.endswith(".png"):
+            # Create the full file path
+            file_path = os.path.join(folder_path, filename)
+            # Read the image using OpenCV
+            # mask = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)  # Reads the mask in grayscale
+            mask = Image.open(file_path).convert('L')
+            mask_np = np.array(mask)
+            binarized_mask = ((mask_np > 0).astype(np.uint8)).astype(np.uint8)
+            if mask is not None:
+                images.append(binarized_mask)
+            else:
+                print(f"Failed to load image: {filename}")
+    return images
 
 def load_json_annotations(json_path):
     with open(json_path, 'r') as json_file:
@@ -188,6 +209,8 @@ def remove_small_noise_by_contour_area(config_Dict, foreground_mask):
     image_without_small_contours = cv2.bitwise_and(image, image, mask=mask)
 
     return image_without_small_contours
+
+
 def highlight_mask_in_image(frame, final_mask):
 
     b, g, red_channel = cv2.split(frame)
@@ -196,12 +219,6 @@ def highlight_mask_in_image(frame, final_mask):
 
     if final_mask.shape[:2] != red_channel.shape[:2]:
         raise ValueError("Binary mask and image must have the same dimensions.")
-    height, width, _ = frame.shape
-
-    left_boundary = int(0.10 * width)
-    right_boundary = int(0.90 * width)
-    final_mask[:, :left_boundary] = 0
-    final_mask[:, right_boundary:] = 0
 
     red_channel = cv2.add(final_mask, red_channel)
 
@@ -222,14 +239,18 @@ def detect_foreign_particles(bg_model,config_Dict,frame,yolo_boxes,nullify_mask,
     # params is ForeignParticleDetectorParams inside of it background model
     final_mask = remove_small_noise_by_contour_area(config_Dict, mask_without_noise)
     final_mask = cv2.bitwise_and(final_mask, nullify_mask)
+    ##
+    height, width, _ = frame.shape
+    ##
+    line_position1 = int(0.10 * width)
+    line_position2 = int(0.90 * width)
+    ##
+    final_mask[:, :line_position1] = 0
+    final_mask[:, line_position2:] = 0
+    ##
 
     # Visualize foreign particle on the original frame
     visualization_activation_map = highlight_mask_in_image(frame, final_mask)
-    height, width, _ = frame.shape
-
-    # Calculate the positions for the vertical lines
-    line_position1 = int(0.10 * width)
-    line_position2 = int(0.90 * width)
 
     # Draw the vertical lines
     color = (0, 255, 0)  # Color of the line (B, G, R)
@@ -241,9 +262,11 @@ def detect_foreign_particles(bg_model,config_Dict,frame,yolo_boxes,nullify_mask,
     # Draw the second line
     cv2.line(visualization_activation_map, (line_position2, 0), (line_position2, height), color, thickness)
     if not show_inpaint_effect:
-        return visualization_activation_map
+        return visualization_activation_map,final_mask
     else:
         mog_foreground = cv2.bitwise_and(mog_foreground, nullify_mask)
+        mog_foreground[:, :line_position1] = 0
+        mog_foreground[:, line_position2:] = 0
         visualization_inpaint_effect = highlight_mask_in_image(frame, mog_foreground)
         cv2.line(visualization_inpaint_effect, (line_position1, 0), (line_position1, height), color, thickness)
 
@@ -251,26 +274,101 @@ def detect_foreign_particles(bg_model,config_Dict,frame,yolo_boxes,nullify_mask,
         cv2.line(visualization_inpaint_effect, (line_position2, 0), (line_position2, height), color, thickness)
         # Stack the images horizontally
         stacked_image = np.hstack((visualization_activation_map, visualization_inpaint_effect))
-        return stacked_image
+        return stacked_image,mog_foreground
 
 
 def reduce_frame_size(frame, yolo_boxes, scale_percent=0.9):
     if scale_percent >= 0.9:
-        return (frame, yolo_boxes)
+        return frame, yolo_boxes
     else:
         # Resize the frame
         width = int(frame.shape[1] * scale_percent)
         height = int(frame.shape[0] * scale_percent)
         frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
-
         # Resize the bounding boxes
         for rect in yolo_boxes:
             rect[0] = int(rect[0] * scale_percent)
             rect[1] = int(rect[1] * scale_percent)
             rect[2] = int(rect[2] * scale_percent)
             rect[3] = int(rect[3] * scale_percent)
-    return (frame, yolo_boxes)
+    return frame, yolo_boxes
 
+
+def reduce_frame_size_X_Y(frame, yolo_boxes, scale_percent_X, scale_percent_Y):
+    if scale_percent_X >= 0.9:
+        return frame, yolo_boxes
+    else:
+        # Resize the frame
+        width = 224
+        height = 224
+        frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+        # Resize the bounding boxes
+        for rect in yolo_boxes:
+            rect[0] = int(rect[0] * scale_percent_X)
+            rect[1] = int(rect[1] * scale_percent_Y)
+            rect[2] = int(rect[2] * scale_percent_X)
+            rect[3] = int(rect[3] * scale_percent_Y)
+    return frame, yolo_boxes
+
+def reduce_gn(frame, scale_percent=0.9):
+    if scale_percent >= 0.9:
+        return frame
+    else:
+        width = int(frame.shape[1] * scale_percent)
+        height = int(frame.shape[0] * scale_percent)
+        frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+    return frame
+
+
+def reduce_gn_X_Y(frame, scale_percent_x,scale_percent_y):
+    if scale_percent_x >= 0.9:
+        return frame
+    else:
+        width = 224
+        height = 224
+        frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+    return frame
+
+
+def reshape_lanes(lanes,scale_percent):
+    for rect in lanes:
+        rect[0] = int(rect[0] * scale_percent)
+        rect[1] = int(rect[1] * scale_percent)
+        rect[2] = int(rect[2] * scale_percent)
+        rect[3] = int(rect[3] * scale_percent)
+    return lanes
+
+
+def reshape_lanes_X_Y(lanes,scale_percent_x,scale_percent_y):
+    for rect in lanes:
+        rect[0] = int(rect[0] * scale_percent_x)
+        rect[1] = int(rect[1] * scale_percent_y)
+        rect[2] = int(rect[2] * scale_percent_x)
+        rect[3] = int(rect[3] * scale_percent_y)
+    return lanes
+
+
+def calculate_sensitivity(tp, fn):
+    """
+    Calculate sensitivity/ recall (True Positive Rate or Recall).
+    """
+    return (tp / (tp + fn))*100
+
+# Precision
+def calculate_precision(tp, fp):
+    """
+    Calculate Precision (True Positive Rate or Sensitivity).
+    """
+    return (tp / (tp + fp))*100
+
+
+def calculate_accuracy(tp, tn, fp, fn):
+    """
+    Calculate accuracy.
+    """
+    correct_predictions = tp + tn
+    total_predictions = tp + tn + fp + fn
+    return (correct_predictions / total_predictions)*100
 if __name__ == '__main__':
     seed = 1
     random.seed(seed)
@@ -291,16 +389,20 @@ if __name__ == '__main__':
                    "lane_4_coord": [0,1103,1216,125],
                    "lane_5_coord": [0,1438,1216,128],
                    "lane_6_coord": [0,1768,1216,105],
-                   "percImageReduction":1,
+                   "percImageReduction":0.4,
                    "output_path": r"testing.avi",
-                   "input_path": r"D:\datasets\FOREIGN_PARTICLE_DATASET\FOREIGN_PARTICLE_ANNOTATED_GREY_V_BLUE",
-                   "json_path": r"D:\datasets\FOREIGN_PARTICLE_DATASET\FOREIGN_PARTICLE_ANNOTATED_GREY_V_BLUE\Labeling.json",
+                   "input_path":
+                       r"D:\github_directories\foriegn\black_plate_c_shape_blue_pills\SEQ00004_MIXED_FOREIGN_PARTICLE",
+                   "json_path":
+                       r"D:\github_directories\foriegn\black_plate_c_shape_blue_pills\SEQ00004_MIXED_FOREIGN_PARTICLE\Labeling.json",
                    }
     folder_path_frames = config_Dict["input_path"]
+    gn_path_frames = str(config_Dict["input_path"])+"_mask"
     json_file_path = config_Dict["json_path"]
 
     foreign_frames = load_images(folder_path_frames)
     yolo_predictions = load_json_annotations(json_file_path)
+    foreign_frames_gn = load_images_gn(gn_path_frames)
     localizations_dict = {}
     for item in yolo_predictions['files']:
         file_name = item['file_name']
@@ -310,12 +412,15 @@ if __name__ == '__main__':
         bbox_values = [localization["bbox"] for localization in localizations]
         localizations_dict[file_name].extend(bbox_values)
     bbox_lists = list(localizations_dict.values())
-
+    # Calculate scale factors
+    height, width = foreign_frames[0].shape[0:2]
+    x_scale = 224 / width
+    y_scale = 224 / height
     output_sequence = []
     if config_Dict["percImageReduction"] >= 0.9:
         config_Dict["percImageReduction"] = 1.0
 
-    height, width = foreign_frames[0].shape[0:2]
+    print(height,width)
     # Calculate the new dimensions (50% of the original)
     width = int(width * config_Dict["percImageReduction"])
     height = int(height * config_Dict["percImageReduction"])
@@ -325,11 +430,79 @@ if __name__ == '__main__':
              config_Dict["lane_4_coord"],
              config_Dict["lane_5_coord"],
              config_Dict["lane_6_coord"]]
-    nullify_mask = nullify_outside_boxes(width,height,lanes)
-    bg_model = cv2.createBackgroundSubtractorMOG2(history=config_Dict["history"], varThreshold=config_Dict["varThreshold"],
+    if config_Dict["percImageReduction"] < 0.9:
+        # lanes = reshape_lanes(lanes,config_Dict["percImageReduction"])
+        lanes = reshape_lanes_X_Y(lanes,x_scale,y_scale)
+
+        # config_Dict["percImageReduction"] = 1.0
+    nullify_mask = nullify_outside_boxes(224, 224, lanes)
+
+    # nullify_mask = nullify_outside_boxes(width,height,lanes)
+    bg_model = cv2.createBackgroundSubtractorMOG2(history=config_Dict["history"],
+                                                  varThreshold=config_Dict["varThreshold"],
                                                   detectShadows=config_Dict["detect_shadows"])
+    list_activations = []
     for frame_idx in tqdm(range(len(foreign_frames))):
-        frame, yolo_boxes = reduce_frame_size(foreign_frames[frame_idx],bbox_lists[frame_idx] , config_Dict["percImageReduction"])
-        output_image = detect_foreign_particles(bg_model,config_Dict, frame, yolo_boxes,nullify_mask, show_inpaint_effect=True)
+        # frame, yolo_boxes = reduce_frame_size(foreign_frames[frame_idx],bbox_lists[frame_idx],
+        #                                       config_Dict["percImageReduction"])
+        frame, yolo_boxes = reduce_frame_size_X_Y(foreign_frames[frame_idx],bbox_lists[frame_idx],x_scale,y_scale)
+        # foreign_frames_gn[frame_idx] = reduce_gn(foreign_frames_gn[frame_idx], config_Dict["percImageReduction"])
+        foreign_frames_gn[frame_idx] = reduce_gn_X_Y(foreign_frames_gn[frame_idx] , x_scale , y_scale)
+
+
+        output_image,activation = detect_foreign_particles(bg_model,config_Dict, frame,
+                                                           yolo_boxes,nullify_mask,
+                                                           show_inpaint_effect=True)
         output_sequence.append(output_image)
+        activation = (activation.astype(np.float32)/255.0).astype(np.uint8)
+        activation = np.expand_dims(activation, axis=0)
+        list_activations.append(activation)
     makeVideoFromImageArray(config_Dict["output_path"], output_sequence)
+
+    seg_scores = np.asarray(list_activations)
+    gt_mask = (np.asarray(foreign_frames_gn)).astype(np.uint8)
+    gt_flat = gt_mask.flatten()
+    pred_flat = seg_scores.flatten()
+    print("Ground Truth shape",gt_flat.shape)
+    print("Predicted shape",pred_flat.shape)
+
+    per_pixel_rocauc = roc_auc_score(gt_flat, pred_flat)
+    # Calculate confusion matrix
+    conf_matrix = confusion_matrix(gt_flat, pred_flat)
+    goal_matrix = confusion_matrix(gt_flat, gt_flat)
+    print("Target Goal")
+    print(goal_matrix)
+    print("algo performance")
+    print(conf_matrix)
+    # True positives (TP) are in the intersection of positive class in both gt and predictions
+    true_positives = conf_matrix[1, 1]
+    true_negatives = conf_matrix[0, 0]
+
+    # False positives (FP) are positive in predictions but negative in gt
+    false_positives = conf_matrix[0, 1]
+    false_negatives = conf_matrix[1, 0]
+
+    perc_matrix = np.array([[(conf_matrix[0, 0]/goal_matrix[0,0])*100,
+                            -1],
+                           [-1,
+                            (conf_matrix[1, 1]/goal_matrix[1,1])*100]])
+
+    print("perc_matrix")
+    print(perc_matrix)
+    # Average number of true positive activations per pixel
+    average_true_positive = true_positives / np.sum(gt_flat == 1)
+
+    # Average number of false positive activations per pixel
+    # we divide the false postive by the total number no activations
+    average_false_positive = false_positives / np.sum(gt_flat == 0)
+    print('average true postive: {0}'.format(average_true_positive))
+    print('average false postive: {0}'.format(average_false_positive))
+
+    print("The Sensetivity/Recall is: {0}".format(calculate_sensitivity(true_positives, false_negatives)))
+    print("The Precsion is: {0}".format(calculate_precision(true_positives, false_positives)))
+    print("The accuracy is: {0}".format(calculate_accuracy(true_positives,
+                                                           true_negatives,
+                                                           false_positives,
+                                                           false_negatives)))
+    print('pixel ROCAUC: %.2f' % per_pixel_rocauc)
+
