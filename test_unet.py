@@ -134,7 +134,7 @@ def plot_bounding_boxes(original, reconstructed, threshold=0.1):
     #         x, y, w, h = cv2.boundingRect(contour)
     #         cv2.rectangle(original_bgr, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-    return original_bgr,mask
+    return original_bgr,red_channel
 
 
 if __name__ == '__main__':
@@ -196,6 +196,7 @@ if __name__ == '__main__':
                                    transforms.Normalize(mean=[-0.09039213, -0.08525948, -0.09549119],
                                                         std=[1., 1., 1.]),
                                    ])
+
     for x in tqdm(test_loader):
         with torch.no_grad():
             x= x.to(device)
@@ -211,6 +212,7 @@ if __name__ == '__main__':
             new_frame,mask = plot_bounding_boxes(original=original,reconstructed=reconstructed,threshold=0.21)
             new_frame_reconstruced = cv2.cvtColor((reconstructed.transpose(1, 2, 0)*255).astype(np.uint8),
                                        cv2.COLOR_RGB2BGR)
+
             output_sequence_reconstruced.append(new_frame_reconstruced)
             output_sequence.append(new_frame)
             output_sequence_.append(mask)
