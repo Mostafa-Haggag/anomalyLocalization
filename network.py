@@ -296,56 +296,73 @@ class VAE_new(nn.Module):
 
 
 class VAE(nn.Module):
-    def __init__(self, z_dim=128):
+    def __init__(self, z_dim=128,input_image_size=64,number_of_channels =3):
         super(VAE, self).__init__()
-
+        self.hidden_dims = [32, 64, 128]
+        modules = []
+        in_channels = number_of_channels
+        for h_dim in self.hidden_dims:
+            modules.append(
+                nn.Sequential(
+                    nn.Conv2d(in_channels, out_channels=h_dim,
+                              kernel_size=3, stride=2, padding=1),
+                    nn.BatchNorm2d(h_dim),
+                    nn.LeakyReLU(0.2))
+            )
+            in_channels = h_dim
+        self .low_size = input_image_size //(2**len(self.hidden_dims))
+        self.conv_e = nn.Sequential(*modules)
         # encode
-        self.conv_e = nn.Sequential(
-            # size
-            nn.Conv2d(3, 32, kernel_size=4, stride=2, padding=1),    # 512 ⇒ 256
-            nn.BatchNorm2d(32),            
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),  # 256 ⇒ 128
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),  # 128 ⇒ 64
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.2),
-        )# the size by the end of here is 6  by 6
+        # the size by the end of here is 6  by 6
         self.fc_e = nn.Sequential(
-            nn.Linear(128 * 14 * 14, 1024),
+            nn.Linear(self.hidden_dims[-1] * self .low_size * self .low_size, 1024),
             nn.BatchNorm1d(1024),
             nn.LeakyReLU(0.2),
             nn.Linear(1024, z_dim*2),
         )
+        self.hidden_dims.reverse()
+
+        # Build Decoder
+        modules = []
+        for i in range(len(self.hidden_dims)-1):
+            modules.append(
+                nn.Sequential(
+                    nn.ConvTranspose2d(self.hidden_dims[i],
+                                       self.hidden_dims[i + 1],
+                                       kernel_size=4,
+                                       stride = 2,
+                                       padding=1),
+                    nn.BatchNorm2d(self.hidden_dims[i + 1]),
+                    nn.LeakyReLU())
+            )
+        modules.append(
+                    nn.Sequential(
+                        nn.ConvTranspose2d(self.hidden_dims[-1],
+                                       number_of_channels,
+                                       kernel_size=4,
+                                       stride = 2,
+                                       padding=1),
+                        nn.Sigmoid()
+                    )
+                    )
+
+        self.conv_d = nn.Sequential(*modules)
 
         # decode
         self.fc_d = nn.Sequential(
             nn.Linear(z_dim, 1024),
             nn.BatchNorm1d(1024),
             nn.LeakyReLU(0.2),
-            nn.Linear(1024, 128 * 14 * 14),
+            nn.Linear(1024, self.hidden_dims[0] * self .low_size * self .low_size),
             nn.LeakyReLU(0.2)
         )
-        self.conv_d = nn.Sequential(
-            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.2),
-            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(32),
-            nn.LeakyReLU(0.2),
-            nn.ConvTranspose2d(32, 3, kernel_size=4, stride=2, padding=1),
-            nn.Sigmoid()
-        )
-
         self.z_dim = z_dim
         self.initialize()
 
     def encode(self, input):
         # input is greyscale (1,128,128)
         x = self.conv_e(input) # the size is torch.Size([256, 128, 16, 16])
-        x = x.view(-1, 128*14*14)# you flatten everything
-        # [256, 32768]
+        x = torch.flatten(x,start_dim=1)
 
         x = self.fc_e(x)# [256,1024] returned size
         # you divide them depedning on z_dim
@@ -386,7 +403,7 @@ class VAE(nn.Module):
         # you have an input of [256,512]
         # torch.Size([128, 512])
         h = self.fc_d(z)# full convelutions
-        h = h.view(-1, 128, 14, 14)
+        h = h.view(-1, self.hidden_dims[0], self.low_size, self.low_size)
         return self.conv_d(h)# unsampling
 
     def initialize(self):

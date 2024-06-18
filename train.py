@@ -169,8 +169,9 @@ def main(config_Dict):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
 
-
-    model = VAE(z_dim=config_Dict["z_dim"]).to(device)
+    #input_image_size = 64, number_of_channels = 3
+    model = VAE(z_dim=config_Dict["z_dim"],input_image_size=config_Dict["input_size"],
+                number_of_channels=config_Dict["number_of_channels"]).to(device)
     #model = VAE_new(z_dim=config_Dict["z_dim"]).to(device)
     #model = AE(latent_size=config_dict["z_dim"],img_size=256,vae=False).to(device)
 
@@ -214,7 +215,9 @@ if __name__ == "__main__":
                    "model_id":'vae_reconstruction',
                    "tag":"VAE model",
                    "loss_type":"vae",
-                   "saving_epoch":1
+                   "saving_epoch":1,
+                   "input_size":224,
+                   "number_of_channels":3,
                    }
     wandb.init(
         # set the wandb project where this run will be logged
