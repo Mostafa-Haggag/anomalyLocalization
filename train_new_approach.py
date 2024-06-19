@@ -17,7 +17,8 @@ import random
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
+os.environ['CUDA_LAUNCH_BLOCKING']="1"
+os.environ['TORCH_USE_CUDA_DSA'] = "1"
 def fig2img(fig):
     """Convert a Matplotlib figure to a PIL Image and return it"""
 
@@ -164,10 +165,14 @@ def validation(model, test_loader, device, epoch,loss_type):
 
 
 def main(config_Dict):
-    train_loader = return_MVTecAD_loader(image_dir=r"D:\github_directories\foriegn\SEQ00003_MIXED_COUNTED_313",
-                                         batch_size=config_Dict["batch_size"], train=True)
-    test_loader = return_MVTecAD_loader(image_dir=r"D:\github_directories\foriegn\SEQ00004_MIXED_FOREIGN_PARTICLE",
-                                        batch_size=config_Dict["batch_size"], train=False)
+    train_loader = return_MVTecAD_loader(image_dir=config_Dict['training_set'],
+                                         batch_size=config_Dict["batch_size"],
+                                         image_size=config_Dict["input_size"],
+                                         train=True)
+    test_loader = return_MVTecAD_loader(image_dir=config_Dict['testing_set'],
+                                        batch_size=config_Dict["batch_size"],
+                                        image_size=config_Dict["input_size"],
+                                        train=False)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
     model = UNetModel(in_channels=config_Dict['unet_inout_channels'],
@@ -228,7 +233,7 @@ if __name__ == "__main__":
                    "lr": 5e-4,
                    "z_dim": 512,
                    "model_id": 'UNET_DESIGN',
-                   "tag": "u_net_model",
+                   "tag": "blue_pill",
                    "unet_inout_channels": 3,
                    "unet_inplanes": 16,
                    "unet_residual": 1,
@@ -243,13 +248,16 @@ if __name__ == "__main__":
                    "unet_res_updown": False,
                    "saving_epoch": 1,
                    "loss_type": "mse",
+                   "image_size":224,
+                   "training_set": r"D:\github_directories\foriegn\black_plate_c_shape_blue_pills\SEQ00003_MIXED_COUNTED_313",
+                   "testing_set": r"D:\github_directories\foriegn\black_plate_c_shape_blue_pills\SEQ00004_MIXED_FOREIGN_PARTICLE"
                    }
 
     wandb.init(
         # set the wandb project where this run will be logged
-        project="Foreign_Particle_project",
+        project="Foreign_Particle_project_organised",
         config=config_dict,
-        tags=["u_net", config_dict["tag"]],
+        tags=["u_net_with_skipp", config_dict["tag"]],
     )
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     new_run_name = f'{timestamp}_{config_dict["model_id"]}_{config_dict["tag"]}'

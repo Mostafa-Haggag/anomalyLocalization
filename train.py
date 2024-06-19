@@ -12,7 +12,8 @@ import io
 from PIL import Image
 from datetime import datetime
 import random
-
+os.environ['CUDA_LAUNCH_BLOCKING']="1"
+os.environ['TORCH_USE_CUDA_DSA'] = "1"
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ def train(model, train_loader, device, optimizer, epoch,loss_type):
     train_kld = 0
     train_reconstruction = 0
     train_mse = 0
+    train_size = 0
     wandb_images_images = []
     with tqdm(total=len(train_loader), desc=f"Epoch {epoch+1}", unit="batch") as pbar:
         for batch_idx, data in enumerate(train_loader):
@@ -56,6 +58,7 @@ def train(model, train_loader, device, optimizer, epoch,loss_type):
                 raise ValueError(f"Unsupported loss type: {loss_type}. Please use 'vae' or 'mse'.")
             loss.backward()
             train_loss += loss.item()
+            train_size += data.shape[0]
             optimizer.step()
             pbar.set_postfix({"Total Loss": loss.item()})
             pbar.update()
@@ -87,11 +90,11 @@ def train(model, train_loader, device, optimizer, epoch,loss_type):
                     plt.close(fig)
                     plt.close("all")
                     wandb_images_images.append(wandb.Image(final_image))
-    train_loss /= len(train_loader.dataset)
-    train_mse /= len(train_loader.dataset)
+    train_loss /= train_size
+    train_mse /= train_size
     if loss_type == "vae":
-        train_kld /= len(train_loader.dataset)
-        train_reconstruction /= len(train_loader.dataset)
+        train_kld /= train_size
+        train_reconstruction /= train_size
         wandb.log({"train/Paired Images": wandb_images_images,"train/Total Loss": train_loss,
                    "train/RECON":train_reconstruction,"train/KLD":train_kld,"train/mse":train_mse}, step=epoch)
     elif loss_type == "mse":
@@ -107,6 +110,7 @@ def validation(model, test_loader, device, epoch,loss_type):
     valid_kld = 0
     valid_mse = 0
     valid_reconstruction = 0
+    test_size = 0
     wandb_images_images = []
     with tqdm(total=len(test_loader), desc=f"Epoch {epoch+1}", unit="batch") as pbar:
         for batch_idx, data in enumerate(test_loader):
@@ -124,6 +128,8 @@ def validation(model, test_loader, device, epoch,loss_type):
                 else:
                     raise ValueError(f"Unsupported loss type: {loss_type}. Please use 'vae' or 'mse'.")
                 valid_loss += loss.item()
+                test_size += data.shape[0]
+
                 pbar.set_postfix({"Total Loss": loss.item()})
                 pbar.update()
                 original_images_plotting = data[5].detach().cpu().numpy()
@@ -147,39 +153,48 @@ def validation(model, test_loader, device, epoch,loss_type):
                 plt.close(fig)
                 plt.close("all")
                 wandb_images_images.append(wandb.Image(final_image))
-    valid_loss /= len(test_loader.dataset)
+    valid_loss /= test_size
     if loss_type == "vae":
-        valid_kld /= len(test_loader.dataset)
-        valid_reconstruction /= len(test_loader.dataset)
+        valid_kld /= test_size
+        valid_reconstruction /= test_size
         wandb.log({"Valid/Paired Images": wandb_images_images,"Valid/Total Loss": valid_loss,
                    "Valid/RECON": valid_reconstruction,"Valid/KLD": valid_kld,
                    "Valid/mse": valid_mse}, step=epoch)
     elif loss_type == "mse":
         wandb.log({"Valid/Paired Images": wandb_images_images,"Valid/Total Loss": valid_loss}, step=epoch)
     else:
-        raise ValueError(f"Unsupported loss type: {loss_type}. Please use 'vae' or 'mse'.")
+        raise ValueError(f"Unsupported loss type: {loss_type}. Please use 'vae' or  m,'mse'.")
     return valid_loss
 
 def main(config_Dict):
-    train_loader = return_MVTecAD_loader(image_dir=r"D:\github_directories\foriegn\SEQ00003_MIXED_COUNTED_313",
-                                         batch_size=config_Dict["batch_size"], train=True)
+    train_loader = return_MVTecAD_loader(image_dir=config_Dict['training_set'],
+                                         batch_size=config_Dict["batch_size"],
+                                         image_size=config_Dict["input_size"],
+                                         train=True)
 
-    test_loader = return_MVTecAD_loader(image_dir=r"D:\github_directories\foriegn\SEQ00004_MIXED_FOREIGN_PARTICLE",
-                                        batch_size=config_Dict["batch_size"], train=False)
+    test_loader = return_MVTecAD_loader(image_dir=config_Dict['testing_set'],
+                                        batch_size=config_Dict["batch_size"],
+                                        image_size=config_Dict["input_size"],
+                                        train=False)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
 
     #input_image_size = 64, number_of_channels = 3
-    model = VAE(z_dim=config_Dict["z_dim"],input_image_size=config_Dict["input_size"],
-                number_of_channels=config_Dict["number_of_channels"]).to(device)
-    #model = VAE_new(z_dim=config_Dict["z_dim"]).to(device)
-    #model = AE(latent_size=config_dict["z_dim"],img_size=256,vae=False).to(device)
+    # model = VAE(z_dim=config_Dict["z_dim"],input_image_size=config_Dict["input_size"],
+    #             number_of_channels=config_Dict["number_of_channels"],
+    #             dropout_rate=config_Dict["dropout_vae"]).to(device)
+    model = VAE(z_dim=config_Dict["z_dim"]).to(device)
+    # Get all model parameters
+    parameters = model.parameters()
+
+    # Clip the norm of the gradients to a maximum value of 1.0
+    # torch.nn.utils.clip_grad_norm_(parameters, max_norm=1.0)
 
     total_params = sum(p.numel() for p in model.parameters())
     total_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-    print(f"Total params: {total_params}")
-    print(f"Total trainable params: {total_trainable_params}")
+    print(f"Total params: {total_params:,}")
+    print(f"Total trainable params: {total_trainable_params:,}")
     wandb.watch(model, log='gradients',log_freq=10)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config_Dict["lr"])
@@ -208,22 +223,25 @@ if __name__ == "__main__":
         torch.backends.cudnn.benchmark = True
 
     print(f"Starting a new wandb run with id {run_id}")
-    config_dict = {"batch_size": 16,
-                   "epoch": 20,
+    config_dict = {"batch_size": 256,
+                   "epoch": 200,
                    "lr": 5e-4,
                    "z_dim": 512,
-                   "model_id":'vae_reconstruction',
-                   "tag":"VAE model",
+                   "model_id":'VAE',
+                   "tag":"blue_pill",
                    "loss_type":"vae",
                    "saving_epoch":1,
-                   "input_size":224,
+                   "input_size":128,
                    "number_of_channels":3,
+                   "dropout_vae":0,
+                   "training_set":r"D:\github_directories\foriegn\black_plate_c_shape_blue_pills\SEQ00003_MIXED_COUNTED_313",
+                   "testing_set": r"D:\github_directories\foriegn\black_plate_c_shape_blue_pills\SEQ00004_MIXED_FOREIGN_PARTICLE"
                    }
     wandb.init(
         # set the wandb project where this run will be logged
-        project="Foreign_Particle_project",
+        project="Foreign_Particle_project_organised",
         config=config_dict,
-        tags=["VAE_understanding", config_dict["tag"]],
+        tags=["VAE", config_dict["tag"]],
     )
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     new_run_name =f'{timestamp}_{config_dict["model_id"]}_{config_dict["tag"]}'

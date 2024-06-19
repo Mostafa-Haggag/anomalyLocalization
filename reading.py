@@ -9,8 +9,8 @@ def create_black_mask(image_path, save_path, mask_size):
     black_mask.save(save_path)
 
 def main():
-    image_list_file = r'C:\Users\Jacopo\Downloads\foreing_particles\ImageSets\Segmentation\default.txt'
-    mask_folder = r'C:\Users\Jacopo\Downloads\foreing_particles\creating'
+    image_list_file = r'C:\Users\Jacopo\Downloads\task_grey_plate_annotations_2024_06_18_16_06_08_segmentation mask 1.1\ImageSets\Segmentation\default.txt'
+    mask_folder = r'C:\Users\Jacopo\Downloads\task_grey_plate_annotations_2024_06_18_16_06_08_segmentation mask 1.1\masks'
     mask_extension = '.png'  # Extension for mask files
 
     # Read the list of image names

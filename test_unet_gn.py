@@ -13,6 +13,7 @@ from torchvision.transforms import transforms
 from scipy.ndimage import gaussian_filter
 from sklearn.metrics import roc_auc_score
 from sklearn.metrics import confusion_matrix
+import pandas as pd
 
 def makeVideoFromImageArray(output_filename, image_list):
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
@@ -109,8 +110,8 @@ def plot_bounding_boxes(original, reconstructed, threshold=0.1):
     # difference =mse(original,reconstructed)
     difference = np.abs(original - reconstructed)
     #difference_gray = np.mean(difference, axis=0)
-    difference_gray = np.sum(difference, axis=0)
-    #difference_gray = np.max(difference, axis=0)
+    # difference_gray = np.sum(difference, axis=0)
+    difference_gray = np.max(difference, axis=0)
     mask = ((difference_gray > threshold).astype(np.uint8) * 255).astype(np.uint8)
 
 
@@ -256,10 +257,11 @@ if __name__ == '__main__':
                       ).to(device)
     # model = VAE_new(z_dim=config_dict["z_dim"]).to(device)
     path_model = \
-        r"D:\github_directories\anomalyLocalization\checkpoints\20240613_130503_UNET_DESIGN_no_skip\20.pth"
+        r"D:\github_directories\anomalyLocalization\checkpoints\20240619_153346_UNET_DESIGN_u_net_no_skip_connections\20.pth"
     model.load_state_dict(torch.load(path_model), strict=True)
     test_loader = return_MVTecAD_loader_test_GN(
             image_dir=r"D:\github_directories\foriegn\black_plate_c_shape_blue_pills\SEQ00004_MIXED_FOREIGN_PARTICLE",
+            image_size=224,
             batch_size=config_Dict["batch_size"])
     model.eval()
     output_sequence = []
@@ -270,8 +272,10 @@ if __name__ == '__main__':
                                    transforms.Normalize(mean=[-0.09039213, -0.08525948, -0.09549119],
                                                         std=[1., 1., 1.]),
                                    ])
-    MSE = torch.nn.MSELoss(reduction='none')
+    MSE = torch.nn.MSELoss()
     gt_mask_list, seg_scores,anomaly_map_list = [],[],[]
+    values_mse = []
+    values_mask = []
     for index,(x,mask_gn) in enumerate(tqdm(test_loader)):
         with torch.no_grad():
             x = x.to(device)
@@ -279,13 +283,15 @@ if __name__ == '__main__':
             # x = invTrans(x.squeeze(0)).detach().cpu().numpy()
             # x_output = invTrans(x_hat.squeeze(0)).detach().cpu().numpy()
             mse = MSE(x,x_hat)
+            values_mse.append(mse.item())
+            values_mask.append(torch.max(mask_gn).item())
             x = (x.squeeze(0)).detach().cpu().numpy()
             x_output = (x_hat.squeeze(0)).detach().cpu().numpy()
             # original = (x - x.min()) / (x.max() - x.min())
             original = x
             # reconstructed = (x_output - x_output.min()) / (x_output.max() - x_output.min())
             reconstructed = x_output
-            new_frame,mask_calculated = plot_bounding_boxes(original=original,reconstructed=reconstructed,threshold=0.16)
+            new_frame,mask_calculated = plot_bounding_boxes(original=original,reconstructed=reconstructed,threshold=0.12)
             original_tensor = torch.from_numpy(original)
             reconstructed_tensor = torch.from_numpy(reconstructed)
             # similar to diffusion model
@@ -353,6 +359,29 @@ if __name__ == '__main__':
 
     print("perc_matrix")
     print(perc_matrix)
+    print(f"Shape of values_mse: {len(values_mse)}")
+    print(f"Shape of values_mask: {len(values_mask)}")
+    assert len(values_mse) == len(values_mask), "Mismatched lengths between values_mse and values_mask"
+
+    # df = pd.DataFrame([values_mse,values_mask], columns=['Values','label'])
+    df = pd.DataFrame({
+        'Values': values_mse,
+        'Label': values_mask
+    })
+    file_excel_name = "meow.xlsx"
+    mean_value = df['Values'].mean()
+    std_value = df['Values'].std()
+    min_value = df['Values'].min()
+    max_value = df['Values'].max()
+    stats_df = pd.DataFrame({
+        'Mean': [mean_value],
+        'Std': [std_value],
+        'Min': [min_value],
+        'Max': [max_value]
+    })
+    file_path_statistics = "meow_statistics.xlsx"
+    df.to_excel(file_excel_name, index=False)
+    stats_df.to_excel(file_path_statistics, index=False)
 
     # Average number of true positive activations per pixel
     average_true_positive = true_positives / np.sum(gt_flat == 1)

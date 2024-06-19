@@ -295,133 +295,208 @@ class VAE_new(nn.Module):
 #         return self.decode(z, x1, x2, x3)
 
 
+# class VAE(nn.Module):
+#     def __init__(self, z_dim=128,input_image_size=64,number_of_channels =3,dropout_rate=0):
+#         super(VAE, self).__init__()
+#         self.hidden_dims = [32, 64, 128]
+#         modules = []
+#         in_channels = number_of_channels
+#         for h_dim in self.hidden_dims:
+#             modules.append(
+#                 nn.Sequential(
+#                     nn.Conv2d(in_channels, out_channels=h_dim,
+#                               kernel_size=3, stride=2, padding=1),
+#                     nn.BatchNorm2d(h_dim),
+#                     nn.LeakyReLU(0.2),
+#                     nn.Dropout(p=dropout_rate)  # Add dropout here
+#                 )
+#             )
+#             in_channels = h_dim
+#         self .low_size = input_image_size //(2**len(self.hidden_dims))
+#         self.conv_e = nn.Sequential(*modules)
+#         # encode
+#         # the size by the end of here is 6  by 6
+#         self.fc_e = nn.Sequential(
+#             nn.Linear(self.hidden_dims[-1] * self .low_size * self .low_size, 1024),
+#             nn.BatchNorm1d(1024),
+#             nn.LeakyReLU(0.2),
+#             nn.Dropout(p=dropout_rate),  # Apply dropout here
+#             nn.Linear(1024, z_dim*2),
+#             nn.Dropout(p=dropout_rate),  # Apply dropout here
+#
+#         )
+#         self.hidden_dims.reverse()
+#
+#         # Build Decoder
+#         modules = []
+#         for i in range(len(self.hidden_dims)-1):
+#             modules.append(
+#                 nn.Sequential(
+#                     nn.ConvTranspose2d(self.hidden_dims[i],
+#                                        self.hidden_dims[i + 1],
+#                                        kernel_size=4,
+#                                        stride = 2,
+#                                        padding=1),
+#                     nn.BatchNorm2d(self.hidden_dims[i + 1]),
+#                     nn.LeakyReLU())
+#             )
+#         modules.append(
+#                     nn.Sequential(
+#                         nn.ConvTranspose2d(self.hidden_dims[-1],
+#                                        number_of_channels,
+#                                        kernel_size=4,
+#                                        stride = 2,
+#                                        padding=1),
+#                         nn.Sigmoid()
+#                     )
+#                     )
+#
+#         self.conv_d = nn.Sequential(*modules)
+#
+#         # decode
+#         self.fc_d = nn.Sequential(
+#             nn.Linear(z_dim, 1024),
+#             nn.BatchNorm1d(1024),
+#             nn.LeakyReLU(0.2),
+#             nn.Linear(1024, self.hidden_dims[0] * self .low_size * self .low_size),
+#             nn.LeakyReLU(0.2)
+#         )
+#         self.z_dim = z_dim
+#         self.initialize()
+#
+#     def encode(self, input):
+#         # input is greyscale (1,128,128)
+#         x = self.conv_e(input) # the size is torch.Size([256, 128, 16, 16])
+#         x = torch.flatten(x,start_dim=1)
+#
+#         x = self.fc_e(x)# [256,1024] returned size
+#         # you divide them depedning on z_dim
+#         # it is as if oyu have two parts
+#             # mu: The mean vector of the latent Gaussian distribution.
+#             # logvar: The logarithm of the variance vector of the latent Gaussian distribution.
+#                 # Using the logarithm of the variance helps maintain numerical stability during training.
+#         return x[:, :self.z_dim], x[:, self.z_dim:]
+#
+#     def reparameterize(self, mu, logvar):
+#         # The reparameterize function uses the reparameterization trick to generate samples from a Gaussian
+#         # distribution with mean mu and variance exp(logvar)
+#         # During training, it introduces randomness by sampling from a standard normal distribution
+#         # and scaling/shifting the samples.
+#         # : This condition checks if the model is currently in training mode.
+#         # If it is, the reparameterization trick is applied. If not (e.g., during evaluation or inference),
+#         # the mean vector mu is directly returned.
+#         if self.training:
+#
+#             # Multiply logvar by 0.5. Take the exponential to obtain the standard deviation.
+#             # simple math is happening in here
+#             std = logvar.mul(0.5).exp_()
+#             # create a new tensor eps with the same size as std, filled with samples from a standard normal distribution
+#             # (mean 0 and variance 1).
+#             eps = std.new(std.size()).normal_()
+#
+#             # This performs the reparameterization
+#             # eps.mul(std): Scale the standard normal samples (eps) by the standard deviation (std).
+#             #  Shift the scaled samples by the mean (mu). This effectively samples from the Gaussian distribution
+#             #  you shift the normal distribtuion by mean and multiple by std
+#             return eps.mul(std).add_(mu)
+#         else:
+#             return mu
+#             # If the model is not in training mode (e.g., during evaluation), the mean vector mu is returned directly
+#             # without adding any noise. This ensures deterministic behavior during inference.
+#
+#     def decode(self, z):
+#         # you have an input of [256,512]
+#         # torch.Size([128, 512])
+#         h = self.fc_d(z)# full convelutions
+#         h = h.view(-1, self.hidden_dims[0], self.low_size, self.low_size)
+#         return self.conv_d(h)# unsampling
+#
+#     def initialize(self):
+#         # this is very important
+#         for m in self.modules():
+#             if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+#                 nn.init.kaiming_normal_(m.weight)
+#                 if m.bias is not None:
+#                     nn.init.constant_(m.bias, 0)
+#             elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.LayerNorm):
+#                 nn.init.constant_(m.weight, 1)
+#                 nn.init.constant_(m.bias, 0)
+#             elif isinstance(m, nn.Linear):
+#                 nn.init.xavier_uniform_(m.weight)
+#                 nn.init.constant_(m.bias, 0)
+#     def forward(self, x):
+#         mu, logvar = self.encode(x)
+#         z = self.reparameterize(mu, logvar) # z should have examly same size as mu and logvar  [batchsize,512]
+#         self.mu = mu
+#         self.logvar = logvar
+#         return self.decode(z)
 class VAE(nn.Module):
-    def __init__(self, z_dim=128,input_image_size=64,number_of_channels =3):
+
+    def __init__(self, z_dim=128):
         super(VAE, self).__init__()
-        self.hidden_dims = [32, 64, 128]
-        modules = []
-        in_channels = number_of_channels
-        for h_dim in self.hidden_dims:
-            modules.append(
-                nn.Sequential(
-                    nn.Conv2d(in_channels, out_channels=h_dim,
-                              kernel_size=3, stride=2, padding=1),
-                    nn.BatchNorm2d(h_dim),
-                    nn.LeakyReLU(0.2))
-            )
-            in_channels = h_dim
-        self .low_size = input_image_size //(2**len(self.hidden_dims))
-        self.conv_e = nn.Sequential(*modules)
+
         # encode
-        # the size by the end of here is 6  by 6
+        self.conv_e = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=4, stride=2, padding=1),    # 128 ⇒ 64
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),  # 64 ⇒ 32
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1),  # 32 ⇒ 16
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.2),
+        )
         self.fc_e = nn.Sequential(
-            nn.Linear(self.hidden_dims[-1] * self .low_size * self .low_size, 1024),
+            nn.Linear(128 * 16 * 16, 1024),
             nn.BatchNorm1d(1024),
             nn.LeakyReLU(0.2),
             nn.Linear(1024, z_dim*2),
         )
-        self.hidden_dims.reverse()
-
-        # Build Decoder
-        modules = []
-        for i in range(len(self.hidden_dims)-1):
-            modules.append(
-                nn.Sequential(
-                    nn.ConvTranspose2d(self.hidden_dims[i],
-                                       self.hidden_dims[i + 1],
-                                       kernel_size=4,
-                                       stride = 2,
-                                       padding=1),
-                    nn.BatchNorm2d(self.hidden_dims[i + 1]),
-                    nn.LeakyReLU())
-            )
-        modules.append(
-                    nn.Sequential(
-                        nn.ConvTranspose2d(self.hidden_dims[-1],
-                                       number_of_channels,
-                                       kernel_size=4,
-                                       stride = 2,
-                                       padding=1),
-                        nn.Sigmoid()
-                    )
-                    )
-
-        self.conv_d = nn.Sequential(*modules)
 
         # decode
         self.fc_d = nn.Sequential(
             nn.Linear(z_dim, 1024),
             nn.BatchNorm1d(1024),
             nn.LeakyReLU(0.2),
-            nn.Linear(1024, self.hidden_dims[0] * self .low_size * self .low_size),
+            nn.Linear(1024, 128 * 16 * 16),
             nn.LeakyReLU(0.2)
         )
+        self.conv_d = nn.Sequential(
+            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.2),
+            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.2),
+            nn.ConvTranspose2d(32, 3, kernel_size=4, stride=2, padding=1),
+            nn.Sigmoid()
+        )
+
         self.z_dim = z_dim
-        self.initialize()
 
     def encode(self, input):
-        # input is greyscale (1,128,128)
-        x = self.conv_e(input) # the size is torch.Size([256, 128, 16, 16])
-        x = torch.flatten(x,start_dim=1)
-
-        x = self.fc_e(x)# [256,1024] returned size
-        # you divide them depedning on z_dim
-        # it is as if oyu have two parts
-            # mu: The mean vector of the latent Gaussian distribution.
-            # logvar: The logarithm of the variance vector of the latent Gaussian distribution.
-                # Using the logarithm of the variance helps maintain numerical stability during training.
+        x = self.conv_e(input)
+        x = x.view(-1, 128*16*16)
+        x = self.fc_e(x)
         return x[:, :self.z_dim], x[:, self.z_dim:]
 
     def reparameterize(self, mu, logvar):
-        # The reparameterize function uses the reparameterization trick to generate samples from a Gaussian
-        # distribution with mean mu and variance exp(logvar)
-        # During training, it introduces randomness by sampling from a standard normal distribution
-        # and scaling/shifting the samples.
-        # : This condition checks if the model is currently in training mode.
-        # If it is, the reparameterization trick is applied. If not (e.g., during evaluation or inference),
-        # the mean vector mu is directly returned.
         if self.training:
-
-            # Multiply logvar by 0.5. Take the exponential to obtain the standard deviation.
-            # simple math is happening in here
             std = logvar.mul(0.5).exp_()
-            # create a new tensor eps with the same size as std, filled with samples from a standard normal distribution
-            # (mean 0 and variance 1).
             eps = std.new(std.size()).normal_()
-
-            # This performs the reparameterization
-            # eps.mul(std): Scale the standard normal samples (eps) by the standard deviation (std).
-            #  Shift the scaled samples by the mean (mu). This effectively samples from the Gaussian distribution
-            #  you shift the normal distribtuion by mean and multiple by std
             return eps.mul(std).add_(mu)
         else:
             return mu
-            # If the model is not in training mode (e.g., during evaluation), the mean vector mu is returned directly
-            # without adding any noise. This ensures deterministic behavior during inference.
 
     def decode(self, z):
-        # you have an input of [256,512]
-        # torch.Size([128, 512])
-        h = self.fc_d(z)# full convelutions
-        h = h.view(-1, self.hidden_dims[0], self.low_size, self.low_size)
-        return self.conv_d(h)# unsampling
+        h = self.fc_d(z)
+        h = h.view(-1, 128, 16, 16)
+        return self.conv_d(h)
 
-    def initialize(self):
-        # this is very important
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-                nn.init.kaiming_normal_(m.weight)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.LayerNorm):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                nn.init.constant_(m.bias, 0)
     def forward(self, x):
         mu, logvar = self.encode(x)
-        z = self.reparameterize(mu, logvar) # z should have examly same size as mu and logvar  [batchsize,512]
+        z = self.reparameterize(mu, logvar)
         self.mu = mu
         self.logvar = logvar
         return self.decode(z)
@@ -455,3 +530,7 @@ def loss_function_2(recon_x, x):
     recon = rec_err.mean()
     return recon
 
+def loss_function_3(recon_x, x):
+    rec_err = abs(recon_x - x)
+    recon = rec_err.mean()
+    return recon

@@ -43,15 +43,15 @@ class MVTecAD(data.Dataset):
         image_path = self.image_paths[index]
         #image = Image.open(image_path).convert('L')  # Convert to grayscale
         image = Image.open(image_path)
-        opencv_image = np.array(image)
-
-        opencv_image = cv2.cvtColor(opencv_image, cv2.COLOR_RGB2BGR)
-        gaussian_blurred = cv2.GaussianBlur(opencv_image, (15, 15), 0)
-        enhanced_image = cv2.convertScaleAbs(gaussian_blurred, alpha=1.5, beta=0)
-        enhanced_image_rgb = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2RGB)
-        image = Image.fromarray(enhanced_image_rgb)
-
-        image = Image.open(image_path)  # not gray scale as picture is colored
+        # opencv_image = np.array(image)
+        #
+        # opencv_image = cv2.cvtColor(opencv_image, cv2.COLOR_RGB2BGR)
+        # gaussian_blurred = cv2.GaussianBlur(opencv_image, (15, 15), 0)
+        # enhanced_image = cv2.convertScaleAbs(gaussian_blurred, alpha=1.5, beta=0)
+        # enhanced_image_rgb = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2RGB)
+        # image = Image.fromarray(enhanced_image_rgb)
+        #
+        # image = Image.open(image_path)  # not gray scale as picture is colored
 
         if self.transform is not None:
             image = self.transform(image)
@@ -89,6 +89,16 @@ def get_sorted_file_paths(image_dir, mask_dir, extensions):
     return paired_paths
 
 
+def binarize(img):
+    width, height = img.size
+    for x in range(width):
+        for y in range(height):
+            if img.getpixel((x,y)) > 0:
+                img.putpixel((x,y),255)
+
+            else:
+                img.putpixel((x,y),0)
+    return img
 
 class MVTecAD_test_set_with_masks(data.Dataset):
     """Dataset class for the MVTecAD dataset."""
@@ -111,14 +121,23 @@ class MVTecAD_test_set_with_masks(data.Dataset):
         #image = Image.open(image_path).convert('L')  # Convert to grayscale
         image = Image.open(image_path)
         mask = Image.open(mask_path).convert('L')
+        # mask = binarize(mask)
+        # mask = mask.point(lambda p: 255 if p > 0 else 0)
         # Step 2: Convert to NumPy array
         mask_np = np.array(mask)
-
-        # Step 3: Apply threshold to binarize the mask
-        binarized_mask_np = ((mask_np > 0).astype(np.uint8)*255).astype(np.uint8)
-
-        # Step 4: Convert back to PIL Image (optional)
-        mask = Image.fromarray(binarized_mask_np)
+        #
+        # Check for NaN values
+        nan_mask = np.isnan(mask_np)
+        if np.any(nan_mask):
+            print("NaN values detected in the array")
+            print(nan_mask)
+        # # Step 3: Apply threshold to binarize the mask
+        mask = (np.where(mask_np > 0, 1, 0)*255).astype(np.uint8)
+        # binarized_mask_np = (mask)
+        # binarized_mask_np = (mask_np > 0).astype(np.uint8)
+        # binarized_mask_np = ((mask_np > 0).astype(np.uint8)*255).astype(np.uint8)
+        #
+        mask = Image.fromarray(mask)
         if self.transform is not None:
             image = self.transform(image)
             mask = self.transform(mask)
@@ -130,7 +149,7 @@ class MVTecAD_test_set_with_masks(data.Dataset):
         return len(self.image_masks_paths)
 
 
-def return_MVTecAD_loader(image_dir, batch_size=256, train=True):
+def return_MVTecAD_loader(image_dir, batch_size=256, image_size=224,train=True):
     """Build and return a data loader."""
     transform = []
     # mean = [0.5, 0.5, 0.5]  # (assuming grayscale or RGB)
@@ -141,7 +160,7 @@ def return_MVTecAD_loader(image_dir, batch_size=256, train=True):
     crop_size = (400, 1936)  # Desired crop size
     #CenterCrop(crop_size)
     #transform.append(CenterCrop(crop_size))
-    transform.append(T.Resize((224, 224)))
+    transform.append(T.Resize((image_size, image_size)))
 
     #transform.append(T.RandomCrop((128,128)))
     #transform.append(T.RandomHorizontalFlip(p=0.5))
@@ -161,7 +180,7 @@ def return_MVTecAD_loader(image_dir, batch_size=256, train=True):
     return data_loader
 
 
-def return_MVTecAD_loader_test_GN(image_dir, batch_size=256):
+def return_MVTecAD_loader_test_GN(image_dir, batch_size=256,image_size=224):
     """Build and return a data loader."""
     transform = []
     # mean = [0.5, 0.5, 0.5]  # (assuming grayscale or RGB)
@@ -172,7 +191,7 @@ def return_MVTecAD_loader_test_GN(image_dir, batch_size=256):
     crop_size = (400, 1936)  # Desired crop size
     #CenterCrop(crop_size)
     #transform.append(CenterCrop(crop_size))
-    transform.append(T.Resize((224, 224)))
+    transform.append(T.Resize((image_size, image_size)))
 
     #transform.append(T.RandomCrop((128,128)))
     #transform.append(T.RandomHorizontalFlip(p=0.5))

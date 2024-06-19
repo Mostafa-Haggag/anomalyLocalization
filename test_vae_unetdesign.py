@@ -140,7 +140,9 @@ if __name__ == '__main__':
         r"D:\github_directories\anomalyLocalization\checkpoints\20240611_172215_u_net_reo_long_run\12.pth"
     model.load_state_dict(torch.load(path_model), strict=True)
     test_loader = return_MVTecAD_loader(image_dir=r"D:\github_directories\foriegn\SEQ00004_MIXED_FOREIGN_PARTICLE",
-                                         batch_size=config_Dict["batch_size"], train=False)
+                                         batch_size=config_Dict["batch_size"],
+                                        image_size=224,
+                                        train=False)
     model.eval()
     output_sequence = []
     output_sequence_reconstruced = []

@@ -134,3 +134,4 @@ checkpoints/
 results/
 wandb/
 *.avi
+*.xlsx
