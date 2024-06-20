@@ -2,8 +2,9 @@ import os
 import torch
 from torch.nn import functional as F
 from dataset import return_MVTecAD_loader
-from network import VAE, loss_function, AE, loss_function_2, VAE_new
-from unet import UNetModel
+from network import VAE, loss_function, AE, loss_function_2, VAE_new,loss_function_3
+from unet import UNetModel_noskipp
+from vq_vae import D_VAE
 import matplotlib.pyplot as plt
 import logging
 import wandb
@@ -13,6 +14,7 @@ import io
 from PIL import Image
 from datetime import datetime
 import random
+from torchvision.transforms import transforms
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -42,21 +44,15 @@ def train(model, train_loader, device, optimizer, epoch,loss_type):
     train_reconstruction = 0
     train_mse = 0
     wandb_images_images = []
+
     with tqdm(total=len(train_loader), desc=f"Epoch {epoch+1}", unit="batch") as pbar:
         for batch_idx, data in enumerate(train_loader):
             data = data.to(device)
             optimizer.zero_grad()
-            recon_batch = model(data)
-            if loss_type == "vae":
-                recon , kld = loss_function(recon_batch, data, model.mu, model.logvar)
-                loss = recon + kld
-                train_kld += kld.item()
-                train_mse += compute_mse_module(recon_batch, data)
-                train_reconstruction += recon.item()
-            elif loss_type == "mse":
-                loss = loss_function_2(recon_batch, data)
-            else:
-                raise ValueError(f"Unsupported loss type: {loss_type}. Please use 'vae' or 'mse'.")
+            loss, reconstructed_img, recon_loss, kl_div_loss = model(data)
+            train_kld += kl_div_loss.item()
+            train_mse += compute_mse_module(reconstructed_img, data)
+            train_reconstruction += recon_loss.item()
             loss.backward()
             train_loss += loss.item()
             optimizer.step()
@@ -64,7 +60,7 @@ def train(model, train_loader, device, optimizer, epoch,loss_type):
             pbar.update()
             if (batch_idx + 1) == len(train_loader) :
                 original_images_plotting = data[:5].detach().cpu().numpy()
-                reconstructed_images_plotting = recon_batch[:5].detach().cpu().numpy()
+                reconstructed_images_plotting = reconstructed_img[:5].detach().cpu().numpy()
                 for i, (original, reconstructed) in enumerate(zip(original_images_plotting,
                                                                   reconstructed_images_plotting)):
                     original = (original*255).astype(np.uint8).transpose(1, 2, 0)
@@ -80,28 +76,22 @@ def train(model, train_loader, device, optimizer, epoch,loss_type):
                     )
                     orginal_img.axis("off")
                     orginal_img.imshow(original)
+                    orginal_img.imshow(original)
                     orginal_img.set_title("Org", fontsize=12)
                     reconstructed_img.axis("off")
                     reconstructed_img.imshow(reconstructed, )
                     reconstructed_img.set_title("Reconst", fontsize=12)
                     final_image = fig2img(fig)
-                    ##final_image.save(f"comparison_{i}.png")
-                    #plt.show()
                     plt.close(fig)
                     plt.close("all")
                     wandb_images_images.append(wandb.Image(final_image))
     train_loss /= len(train_loader.dataset)
     train_mse /= len(train_loader.dataset)
-    if loss_type == "vae":
-        train_kld /= len(train_loader.dataset)
-        train_reconstruction /= len(train_loader.dataset)
-        wandb.log({"train/Paired Images": wandb_images_images,"train/Total Loss": train_loss,
+    train_kld /= len(train_loader.dataset)
+    train_reconstruction /= len(train_loader.dataset)
+    wandb.log({"train/Paired Images": wandb_images_images,"train/Total Loss": train_loss,
                    "train/RECON":train_reconstruction,"train/KLD":train_kld,"train/mse":train_mse}, step=epoch)
-    elif loss_type == "mse":
-        wandb.log({"train/Paired Images": wandb_images_images,"train/Total Loss": train_loss}, step=epoch)
-    else:
-        raise ValueError(f"Unsupported loss type: {loss_type}. Please use 'vae' or 'mse'.")
-    return train_loss
+
 
 
 def validation(model, test_loader, device, epoch,loss_type):
@@ -115,22 +105,15 @@ def validation(model, test_loader, device, epoch,loss_type):
         for batch_idx, data in enumerate(test_loader):
             data = data.to(device)
             with torch.no_grad():
-                recon_batch = model(data)
-                if loss_type == "vae":
-                    recon, kld = loss_function(recon_batch, data, model.mu, model.logvar)
-                    loss = recon + kld
-                    valid_kld += kld.item()
-                    valid_reconstruction += recon.item()
-                    valid_mse += compute_mse_module(recon_batch, data)
-                elif loss_type == "mse":
-                    loss = loss_function_2(recon_batch, data)
-                else:
-                    raise ValueError(f"Unsupported loss type: {loss_type}. Please use 'vae' or 'mse'.")
+                loss, reconstructed_img, recon_loss, kl_div_loss = model(data)
+                valid_kld += kl_div_loss.item()
+                valid_mse += compute_mse_module(reconstructed_img, data)
+                valid_reconstruction += recon_loss.item()
                 valid_loss += loss.item()
                 pbar.set_postfix({"Total Loss": loss.item()})
                 pbar.update()
                 original_images_plotting = data[5].detach().cpu().numpy()
-                reconstructed_images_plotting = recon_batch[5].detach().cpu().numpy()
+                reconstructed_images_plotting = reconstructed_img[5].detach().cpu().numpy()
                 original = (original_images_plotting*255).astype(np.uint8).transpose(1, 2, 0)
                 reconstructed = (reconstructed_images_plotting*255).astype(np.uint8).transpose(1, 2, 0)
                 fig, ( orginal_img, reconstructed_img,
@@ -151,16 +134,11 @@ def validation(model, test_loader, device, epoch,loss_type):
                 plt.close("all")
                 wandb_images_images.append(wandb.Image(final_image))
     valid_loss /= len(test_loader.dataset)
-    if loss_type == "vae":
-        valid_kld /= len(test_loader.dataset)
-        valid_reconstruction /= len(test_loader.dataset)
-        wandb.log({"Valid/Paired Images": wandb_images_images,"Valid/Total Loss": valid_loss,
+    valid_kld /= len(test_loader.dataset)
+    valid_reconstruction /= len(test_loader.dataset)
+    wandb.log({"Valid/Paired Images": wandb_images_images,"Valid/Total Loss": valid_loss,
                    "Valid/RECON": valid_reconstruction,"Valid/KLD": valid_kld,
                    "Valid/mse": valid_mse}, step=epoch)
-    elif loss_type == "mse":
-        wandb.log({"Valid/Paired Images": wandb_images_images,"Valid/Total Loss": valid_loss}, step=epoch)
-    else:
-        raise ValueError(f"Unsupported loss type: {loss_type}. Please use 'vae' or 'mse'.")
     return valid_loss
 
 
@@ -175,29 +153,13 @@ def main(config_Dict):
                                         train=False)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
-    model = UNetModel(in_channels=config_Dict['unet_inout_channels'],
-                      model_channels=config_Dict['unet_inplanes'],
-                      out_channels=config_Dict['unet_inout_channels'],
-                      num_res_blocks=config_Dict['unet_residual'],
-                      attention_resolutions=config_Dict['unet_attention'],
-                      dropout=config_Dict['unet_dropout'],
-                      channel_mult=config_Dict['unet_mult'],
-                      conv_resample=config_Dict['unet_resample'],
-                      dims=config_Dict['unet_dims'],
-                      use_checkpoint=config_Dict['unet_checkpoint'],
-                      num_heads=config_Dict['unet_heads'],
-                      num_head_channels =config_Dict['unet_num_heads_channels'],
-                      resblock_updown=config_Dict['unet_res_updown'],
-                      ).to(device)
-
-    # model = VAE(z_dim=config_Dict["z_dim"]).to(device)
-    #model = VAE_new(z_dim=config_Dict["z_dim"]).to(device)
-
-    # model = AE(latent_size=config_dict["z_dim"],img_size=256,vae=False).to(device)
+    model = D_VAE().to(device)
     total_params = sum(p.numel() for p in model.parameters())
     total_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Total params: {total_params}")
-    print(f"Total trainable params: {total_trainable_params}")
+
+    print(f"Total params: {total_params:,}")
+    print(f"Total trainable params: {total_trainable_params:,}")
+
     wandb.watch(model, log='gradients', log_freq=10)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config_Dict["lr"])
@@ -232,8 +194,8 @@ if __name__ == "__main__":
                    "epoch": 20,
                    "lr": 5e-4,
                    "z_dim": 512,
-                   "model_id": 'UNET_DESIGN_with_skip',
-                   "tag": "blue_pill",
+                   "model_id": 'UNET_DESIGN',
+                   "tag": "u_net_no_skip_connections",
                    "unet_inout_channels": 3,
                    "unet_inplanes": 16,
                    "unet_residual": 1,
@@ -248,16 +210,15 @@ if __name__ == "__main__":
                    "unet_res_updown": False,
                    "saving_epoch": 1,
                    "loss_type": "mse",
-                   "input_size":224,
+                   "input_size": 224,
                    "training_set": r"D:\github_directories\foriegn\black_plate_c_shape_blue_pills\SEQ00003_MIXED_COUNTED_313",
                    "testing_set": r"D:\github_directories\foriegn\black_plate_c_shape_blue_pills\SEQ00004_MIXED_FOREIGN_PARTICLE"
                    }
 
     wandb.init(
-        # set the wandb project where this run will be logged
         project="Foreign_Particle_project_organised",
         config=config_dict,
-        tags=["u_net_with_skipp", config_dict["tag"]],
+        tags=["u_net", config_dict["tag"]],
     )
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     new_run_name = f'{timestamp}_{config_dict["model_id"]}_{config_dict["tag"]}'
