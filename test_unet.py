@@ -6,7 +6,7 @@ from dataset import return_MVTecAD_loader
 from tqdm import tqdm
 import numpy as np
 import cv2
-from unet import UNetModel,UNetModel_noskipp
+from unet import UNetModel,UNetModel_noskipp,UNetModel_dropout_skip
 from torchvision.transforms import transforms
 
 def makeVideoFromImageArray(output_filename, image_list):
@@ -82,7 +82,8 @@ def plot_bounding_boxes(original, reconstructed, threshold=0.1):
     #difference_gray = np.mean(difference, axis=0)
     difference_gray = np.sum(difference, axis=0)
     #difference_gray = np.max(difference, axis=0)
-    mask = ((difference_gray > threshold) * 255).astype(np.uint8)
+    # mask = ((difference_gray > threshold) * 255).astype(np.uint8)
+    mask = ((difference_gray > threshold).astype(np.uint8) * 255).astype(np.uint8)
 
 
 
@@ -105,7 +106,7 @@ def plot_bounding_boxes(original, reconstructed, threshold=0.1):
 
 
     # Find contours
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     # Convert the original image to BGR format for drawing rectangles
     original_bgr = np.transpose(original, (1, 2, 0))  # Convert to (H, W, 3)
@@ -134,8 +135,33 @@ def plot_bounding_boxes(original, reconstructed, threshold=0.1):
     #         x, y, w, h = cv2.boundingRect(contour)
     #         cv2.rectangle(original_bgr, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-    return original_bgr,red_channel
+    return original_bgr,mask
 
+def makeVideoFromImageArray_uncolored(output_filename, image_list):
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')
+    image_height, image_width = image_list[0].shape[:2]
+
+    out = cv2.VideoWriter(filename=output_filename, fourcc=fourcc, fps=8,
+                          frameSize=(image_width, image_height), isColor=False)
+
+    for image_number, image in enumerate(image_list, 1):
+        # # Convert single-channel image to 3-channel (if needed)
+        # if len(image.shape) == 2:
+        #     # image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+        #     image
+        # Add text overlay
+        text = f"Frame {image_number}"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.5
+        font_thickness = 1
+        text_size, _ = cv2.getTextSize(text, font, font_scale, font_thickness)
+        text_x = 10
+        text_y = 20
+        # cv2.putText(image, text, (text_x, text_y), font, font_scale, 255, font_thickness)
+
+        out.write(image)
+
+    out.release()
 
 if __name__ == '__main__':
     seed =1
@@ -167,7 +193,21 @@ if __name__ == '__main__':
                    }
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     #UNetModel
-    model = UNetModel_noskipp(in_channels=config_Dict['unet_inout_channels'],
+    # model = UNetModel_noskipp(in_channels=config_Dict['unet_inout_channels'],
+    #                   model_channels=config_Dict['unet_inplanes'],
+    #                   out_channels=config_Dict['unet_inout_channels'],
+    #                   num_res_blocks=config_Dict['unet_residual'],
+    #                   attention_resolutions=config_Dict['unet_attention'],
+    #                   dropout=config_Dict['unet_dropout'],
+    #                   channel_mult=config_Dict['unet_mult'],
+    #                   conv_resample=config_Dict['unet_resample'],
+    #                   dims=config_Dict['unet_dims'],
+    #                   use_checkpoint=config_Dict['unet_checkpoint'],
+    #                   num_heads=config_Dict['unet_heads'],
+    #                   num_head_channels =config_Dict['unet_num_heads_channels'],
+    #                   resblock_updown=config_Dict['unet_res_updown'],
+    #                   ).to(device)
+    model = UNetModel_dropout_skip(in_channels=config_Dict['unet_inout_channels'],
                       model_channels=config_Dict['unet_inplanes'],
                       out_channels=config_Dict['unet_inout_channels'],
                       num_res_blocks=config_Dict['unet_residual'],
@@ -183,9 +223,9 @@ if __name__ == '__main__':
                       ).to(device)
     # model = VAE_new(z_dim=config_dict["z_dim"]).to(device)
     path_model = \
-        r"D:\github_directories\anomalyLocalization\checkpoints\20240613_130503_UNET_DESIGN_no_skip\20.pth"
+        r"D:\github_directories\anomalyLocalization\checkpoints\20240620_091529_UNET_DESIGN_with_skip_blue_pill\20.pth"
     model.load_state_dict(torch.load(path_model), strict=True)
-    test_loader = return_MVTecAD_loader(image_dir=r"D:\github_directories\foriegn\SEQ00004_MIXED_FOREIGN_PARTICLE",
+    test_loader = return_MVTecAD_loader(image_dir=r"D:\github_directories\foriegn\black_plate_c_shape_blue_pills\SEQ00004_MIXED_FOREIGN_PARTICLE",
                                          batch_size=config_Dict["batch_size"],
                                         image_size=224,
                                         train=False)
@@ -211,13 +251,14 @@ if __name__ == '__main__':
             original = x
             # reconstructed = (x_output - x_output.min()) / (x_output.max() - x_output.min())
             reconstructed = x_output
-            new_frame,mask = plot_bounding_boxes(original=original,reconstructed=reconstructed,threshold=0.21)
+            new_frame,mask_calculated = plot_bounding_boxes(original=original,reconstructed=reconstructed,threshold=0.1)
             new_frame_reconstruced = cv2.cvtColor((reconstructed.transpose(1, 2, 0)*255).astype(np.uint8),
                                        cv2.COLOR_RGB2BGR)
 
             output_sequence_reconstruced.append(new_frame_reconstruced)
             output_sequence.append(new_frame)
-            output_sequence_.append(mask)
-    makeVideoFromImageArray('mask.avi', output_sequence_)
+            mask_calculated = np.expand_dims(mask_calculated, axis=0)
+            output_sequence_.append(mask_calculated.transpose(1,2,0))
+    makeVideoFromImageArray_uncolored('mask.avi', output_sequence_)
     makeVideoFromImageArray('video.avi', output_sequence)
     makeVideoFromImageArray('video_constructed.avi', output_sequence_reconstruced)
