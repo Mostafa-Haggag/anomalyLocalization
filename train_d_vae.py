@@ -92,6 +92,7 @@ def train(model, train_loader, device, optimizer, epoch,loss_type):
     wandb.log({"train/Paired Images": wandb_images_images,"train/Total Loss": train_loss,
                    "train/RECON":train_reconstruction,"train/KLD":train_kld,"train/mse":train_mse}, step=epoch)
 
+    return train_loss
 
 
 def validation(model, test_loader, device, epoch,loss_type):

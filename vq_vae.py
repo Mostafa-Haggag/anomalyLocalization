@@ -35,6 +35,7 @@ class D_VAE(nn.Module):
     def __init__(self, reconstruction_loss='smooth_l1_loss',
                  logit_laplace_eps=None):
         super(D_VAE, self).__init__()
+        self._logit_laplace_eps = logit_laplace_eps
 
         # encode
         self.conv_e = nn.Sequential(
